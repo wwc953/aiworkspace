@@ -20,7 +20,7 @@ DB_CONFIG = {
 }
 
 CONCURRENT_THREADS = 50  # 并发线程数
-TOTAL_REQUESTS = 1000  # 总测试请求数
+TOTAL_REQUESTS = 5000  # 总测试请求数
 
 # ================= 日志与统计 =================
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(threadName)s - %(message)s')

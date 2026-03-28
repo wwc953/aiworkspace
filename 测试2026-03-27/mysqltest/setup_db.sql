@@ -3,6 +3,17 @@
 -- 版本: 2.0 (修复 Error 1442 和 415 错误)
 -- ==================================================
 
+
+DROP FUNCTION IF EXISTS http_get;
+DROP FUNCTION IF EXISTS http_post;
+DROP FUNCTION IF EXISTS http_put;
+DROP FUNCTION IF EXISTS http_delete;
+
+create function http_get returns string soname 'mysql-udf-http.so';
+create function http_post returns string soname 'mysql-udf-http.so';
+create function http_put returns string soname 'mysql-udf-http.so';
+create function http_delete returns string soname 'mysql-udf-http.so';
+
 -- 1. 创建数据库
 CREATE DATABASE IF NOT EXISTS udf_test_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE udf_test_db;
