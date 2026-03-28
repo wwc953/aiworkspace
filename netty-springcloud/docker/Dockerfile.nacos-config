@@ -1,0 +1,28 @@
+# Nacos Config Service Dockerfile
+FROM openjdk:8-jre-slim
+
+# 设置工作目录
+WORKDIR /app
+
+# 添加应用JAR文件
+COPY target/*.jar app.jar
+
+# 环境变量配置
+ENV SPRING_PROFILES_ACTIVE=prod
+ENV JAVA_OPTS="-Xms256m -Xmx512m -XX:+UseG1GC"
+
+# 设置时区
+ENV TZ=Asia/Shanghai
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# JVM优化参数
+ENV JAVA_TOOL_OPTIONS="-Djava.security.egd=file:/dev/./urandom"
+
+# 启动命令
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar app.jar"]
+
+# 暴露端口
+EXPOSE 8848
+
+# 日志目录
+VOLUME ["/app/logs"]

@@ -1,0 +1,78 @@
+# Prometheus Configuration for Netty-SpringCloud
+
+global:
+  scrape_interval:     15s # By default, scrape targets every 15 seconds.
+  evaluation_interval: 15s # Evaluate rules every 15 seconds.
+
+  # Attach these labels to any time series or alerts when communicating with
+  # external systems (federation, remote storage, Alertmanager).
+  external_labels:
+    monitor: 'netty-springcloud-monitor'
+
+# Load and evaluate rules in this file every 'evaluation_interval' seconds.
+rule_files:
+  - 'alert.rules'
+  # - "first.rules"
+  # - "second.rules"
+
+# A scrape configuration containing exactly one endpoint to scrape:
+# Here it's Prometheus itself.
+scrape_configs:
+  # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
+
+  # Scrape Nacos Discovery Service
+  - job_name: 'nacos-discovery'
+    static_configs:
+      - targets: ['nacos-discovery:8848']
+    metrics_path: '/actuator/prometheus'
+    scrape_interval: 10s
+
+  # Scrape Nacos Config Service
+  - job_name: 'nacos-config'
+    static_configs:
+      - targets: ['nacos-config:8848']
+    metrics_path: '/actuator/prometheus'
+    scrape_interval: 10s
+
+  # Scrape Netty Service
+  - job_name: 'netty-service'
+    static_configs:
+      - targets: ['netty-service:8082']
+    metrics_path: '/actuator/prometheus'
+    scrape_interval: 10s
+
+  # Scrape API Gateway
+  - job_name: 'api-gateway'
+    static_configs:
+      - targets: ['api-gateway:9000']
+    metrics_path: '/actuator/prometheus'
+    scrape_interval: 10s
+
+  # Scrape Redis
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+
+  # Default Spring Boot Actuator endpoints
+  - job_name: 'spring-actuator'
+    metrics_path: '/actuator/prometheus'
+    scrape_interval: 30s
+    static_configs:
+      - targets:
+        - 'nacos-discovery:8848'
+        - 'nacos-config:8848'
+        - 'netty-service:8082'
+        - 'api-gateway:9000'
+
+# Remote write configuration (optional)
+# remote_write:
+#   - url: "http://remote-storage-host/write"
+
+# Alerting rule files
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          # - alertmanager:9093

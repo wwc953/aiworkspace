@@ -1,0 +1,19 @@
+# Grafana Dashboard Configuration
+
+apiVersion: 1
+
+providers:
+  - name: 'netty-springcloud'
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+
+# Spring Boot Dashboard ID (replace with actual dashboard JSON)
+# You can download this from https://grafana.com/grafana/dashboards/
+dashboards:
+  - name: spring-boot-dashboard
+    file: /etc/grafana/provisioning/dashboards/spring-boot.json

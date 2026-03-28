@@ -1,0 +1,41 @@
+server:
+  port: 8081
+
+netty:
+  server:
+    port: 8082
+    host: 0.0.0.0
+    boss-threads: 1
+    worker-threads: 4
+    backlog: 1024
+
+logging:
+  level:
+    com.netty.springcloud: DEBUG
+    io.netty: INFO
+
+# Spring Boot配置
+spring:
+  application:
+    name: netty-service
+  profiles:
+    active: dev
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+        namespace: public
+        group: DEFAULT_GROUP
+        metadata:
+          version: 1.0.0
+          env: dev
+      config:
+        server-addr: localhost:8848
+        namespace: public
+        group: DEFAULT_GROUP
+        file-extension: yaml
+
+# Nacos配置
+nacos:
+  username: nacos
+  password: nacos

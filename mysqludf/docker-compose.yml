@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  mysql:
+    # image: mysql:5.7.44
+    image: centos/mysql-57-centos7:latest
+    container_name: mysql-57-udf
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: testdb
+      MYSQL_USER: testuser
+      MYSQL_PASSWORD: testpass
+    volumes:
+      # - ./mysql-data:/var/lib/mysql
+      # - ./init-scripts:/docker-entrypoint-initdb.d
+      - ./plugins:/opt/rh/rh-mysql57/root/usr/lib64/mysql/plugin
+    # command: [
+    #   '--default-authentication-plugin=mysql_native_password',
+    #   '--character-set-server=utf8mb4',
+    #   '--collation-server=utf8mb4_unicode_ci',
+    #   '--plugin-load-add=auth_socket.so',
+    #   '--plugin-load-add=mysql-udf-http.so'
+    # ]
+    # restart: unless-stopped
+
+  # MySQL UDF HTTP 插件服务
+  # mysql-udf-http:
+  #   image: alpine:latest
+  #   container_name: mysql-udf-http
+  #   volumes:
+  #     - ./mysql-udf-http:/usr/src/mysql-udf-http
+  #   working_dir: /usr/src/mysql-udf-http
+  #   command: ["sh", "-c", "echo 'MySQL UDF HTTP Plugin ready' && tail -f /dev/null"]
+  #   depends_on:
+  #     - mysql
+  #   networks:
+  #     - mysql-network
+
+# volumes:
+#   mysql-data:
+
+# networks:
+#   mysql-network:
+#     driver: bridge

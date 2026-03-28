@@ -1,0 +1,100 @@
+2026-03-27T08:57:59.920725Z 0 [Note] Giving 1 client threads a chance to die gracefully
+2026-03-27T08:57:59.920757Z 0 [Note] Shutting down slave threads
+2026-03-27T08:58:01.921756Z 0 [Note] Forcefully disconnecting 1 remaining clients
+2026-03-27T08:58:01.921865Z 0 [Warning] /usr/sbin/mysqld: Forcing close of thread 3  user: 'root'
+
+2026-03-27T08:58:01.922401Z 0 [Note] Event Scheduler: Purging the queue. 0 events
+2026-03-27T08:58:01.924278Z 0 [Note] Binlog end
+2026-03-27T08:58:01.926925Z 0 [Note] Shutting down plugin 'validate_password'
+2026-03-27T08:58:01.926977Z 0 [Note] Shutting down plugin 'ngram'
+2026-03-27T08:58:01.926983Z 0 [Note] Shutting down plugin 'partition'
+2026-03-27T08:58:01.926989Z 0 [Note] Shutting down plugin 'BLACKHOLE'
+2026-03-27T08:58:01.926994Z 0 [Note] Shutting down plugin 'ARCHIVE'
+2026-03-27T08:58:01.926999Z 0 [Note] Shutting down plugin 'PERFORMANCE_SCHEMA'
+2026-03-27T08:58:01.927038Z 0 [Note] Shutting down plugin 'MRG_MYISAM'
+2026-03-27T08:58:01.927050Z 0 [Note] Shutting down plugin 'MyISAM'
+2026-03-27T08:58:01.927069Z 0 [Note] Shutting down plugin 'INNODB_SYS_VIRTUAL'
+2026-03-27T08:58:01.927075Z 0 [Note] Shutting down plugin 'INNODB_SYS_DATAFILES'
+2026-03-27T08:58:01.927079Z 0 [Note] Shutting down plugin 'INNODB_SYS_TABLESPACES'
+2026-03-27T08:58:01.927083Z 0 [Note] Shutting down plugin 'INNODB_SYS_FOREIGN_COLS'
+2026-03-27T08:58:01.927088Z 0 [Note] Shutting down plugin 'INNODB_SYS_FOREIGN'
+2026-03-27T08:58:01.927092Z 0 [Note] Shutting down plugin 'INNODB_SYS_FIELDS'
+2026-03-27T08:58:01.927096Z 0 [Note] Shutting down plugin 'INNODB_SYS_COLUMNS'
+2026-03-27T08:58:01.927102Z 0 [Note] Shutting down plugin 'INNODB_SYS_INDEXES'
+2026-03-27T08:58:01.927106Z 0 [Note] Shutting down plugin 'INNODB_SYS_TABLESTATS'
+2026-03-27T08:58:01.927110Z 0 [Note] Shutting down plugin 'INNODB_SYS_TABLES'
+2026-03-27T08:58:01.927115Z 0 [Note] Shutting down plugin 'INNODB_FT_INDEX_TABLE'
+2026-03-27T08:58:01.927119Z 0 [Note] Shutting down plugin 'INNODB_FT_INDEX_CACHE'
+2026-03-27T08:58:01.927123Z 0 [Note] Shutting down plugin 'INNODB_FT_CONFIG'
+2026-03-27T08:58:01.927127Z 0 [Note] Shutting down plugin 'INNODB_FT_BEING_DELETED'
+2026-03-27T08:58:01.927132Z 0 [Note] Shutting down plugin 'INNODB_FT_DELETED'
+2026-03-27T08:58:01.927137Z 0 [Note] Shutting down plugin 'INNODB_FT_DEFAULT_STOPWORD'
+2026-03-27T08:58:01.927142Z 0 [Note] Shutting down plugin 'INNODB_METRICS'
+2026-03-27T08:58:01.927146Z 0 [Note] Shutting down plugin 'INNODB_TEMP_TABLE_INFO'
+2026-03-27T08:58:01.927151Z 0 [Note] Shutting down plugin 'INNODB_BUFFER_POOL_STATS'
+2026-03-27T08:58:01.927155Z 0 [Note] Shutting down plugin 'INNODB_BUFFER_PAGE_LRU'
+2026-03-27T08:58:01.927159Z 0 [Note] Shutting down plugin 'INNODB_BUFFER_PAGE'
+2026-03-27T08:58:01.927163Z 0 [Note] Shutting down plugin 'INNODB_CMP_PER_INDEX_RESET'
+2026-03-27T08:58:01.927167Z 0 [Note] Shutting down plugin 'INNODB_CMP_PER_INDEX'
+2026-03-27T08:58:01.927172Z 0 [Note] Shutting down plugin 'INNODB_CMPMEM_RESET'
+2026-03-27T08:58:01.927177Z 0 [Note] Shutting down plugin 'INNODB_CMPMEM'
+2026-03-27T08:58:01.927181Z 0 [Note] Shutting down plugin 'INNODB_CMP_RESET'
+2026-03-27T08:58:01.927185Z 0 [Note] Shutting down plugin 'INNODB_CMP'
+2026-03-27T08:58:01.927190Z 0 [Note] Shutting down plugin 'INNODB_LOCK_WAITS'
+2026-03-27T08:58:01.927194Z 0 [Note] Shutting down plugin 'INNODB_LOCKS'
+2026-03-27T08:58:01.927198Z 0 [Note] Shutting down plugin 'INNODB_TRX'
+2026-03-27T08:58:01.927202Z 0 [Note] Shutting down plugin 'InnoDB'
+2026-03-27T08:58:01.927456Z 0 [Note] InnoDB: FTS optimize thread exiting.
+2026-03-27T08:58:01.928137Z 0 [Note] InnoDB: Starting shutdown...
+2026-03-27T08:58:02.030983Z 0 [Note] InnoDB: Dumping buffer pool(s) to /var/lib/mysql/ib_buffer_pool
+2026-03-27T08:58:02.032384Z 0 [Note] InnoDB: Buffer pool(s) dump completed at 260327 16:58:02
+2026-03-27T08:58:03.257905Z 0 [Note] InnoDB: Shutdown completed; log sequence number 12889241
+2026-03-27T08:58:03.261175Z 0 [Note] InnoDB: Removed temporary tablespace data file: "ibtmp1"
+2026-03-27T08:58:03.261208Z 0 [Note] Shutting down plugin 'MEMORY'
+2026-03-27T08:58:03.261216Z 0 [Note] Shutting down plugin 'CSV'
+2026-03-27T08:58:03.261232Z 0 [Note] Shutting down plugin 'sha256_password'
+2026-03-27T08:58:03.261236Z 0 [Note] Shutting down plugin 'mysql_native_password'
+2026-03-27T08:58:03.261493Z 0 [Note] Shutting down plugin 'binlog'
+2026-03-27T08:58:03.262003Z 0 [Note] /usr/sbin/mysqld: Shutdown complete
+
+2026-03-27T08:58:03.544108Z 0 [Warning] TIMESTAMP with implicit DEFAULT value is deprecated. Please use --explicit_defaults_for_timestamp server option (see documentation for more details).
+2026-03-27T08:58:03.545394Z 0 [Note] /usr/sbin/mysqld (mysqld 5.7.44) starting as process 7273 ...
+2026-03-27T08:58:03.548622Z 0 [Note] InnoDB: PUNCH HOLE support available
+2026-03-27T08:58:03.548719Z 0 [Note] InnoDB: Mutexes and rw_locks use GCC atomic builtins
+2026-03-27T08:58:03.548722Z 0 [Note] InnoDB: Uses event mutexes
+2026-03-27T08:58:03.548725Z 0 [Note] InnoDB: GCC builtin __atomic_thread_fence() is used for memory barrier
+2026-03-27T08:58:03.548757Z 0 [Note] InnoDB: Compressed tables use zlib 1.2.13
+2026-03-27T08:58:03.548761Z 0 [Note] InnoDB: Using Linux native AIO
+2026-03-27T08:58:03.548978Z 0 [Note] InnoDB: Number of pools: 1
+2026-03-27T08:58:03.549138Z 0 [Note] InnoDB: Using CPU crc32 instructions
+2026-03-27T08:58:03.550284Z 0 [Note] InnoDB: Initializing buffer pool, total size = 128M, instances = 1, chunk size = 128M
+2026-03-27T08:58:03.555848Z 0 [Note] InnoDB: Completed initialization of buffer pool
+2026-03-27T08:58:03.557549Z 0 [Note] InnoDB: If the mysqld execution user is authorized, page cleaner thread priority can be changed. See the man page of setpriority().
+2026-03-27T08:58:03.569993Z 0 [Note] InnoDB: Highest supported file format is Barracuda.
+2026-03-27T08:58:03.578073Z 0 [Note] InnoDB: Creating shared tablespace for temporary tables
+2026-03-27T08:58:03.578195Z 0 [Note] InnoDB: Setting file './ibtmp1' size to 12 MB. Physically writing the file full; Please wait ...
+2026-03-27T08:58:03.588120Z 0 [Note] InnoDB: File './ibtmp1' size is now 12 MB.
+2026-03-27T08:58:03.588787Z 0 [Note] InnoDB: 96 redo rollback segment(s) found. 96 redo rollback segment(s) are active.
+2026-03-27T08:58:03.588799Z 0 [Note] InnoDB: 32 non-redo rollback segment(s) are active.
+2026-03-27T08:58:03.589466Z 0 [Note] InnoDB: Waiting for purge to start
+2026-03-27T08:58:03.641180Z 0 [Note] InnoDB: 5.7.44 started; log sequence number 12889241
+2026-03-27T08:58:03.642493Z 0 [Note] InnoDB: Loading buffer pool(s) from /var/lib/mysql/ib_buffer_pool
+2026-03-27T08:58:03.642651Z 0 [Note] Plugin 'FEDERATED' is disabled.
+2026-03-27T08:58:03.647578Z 0 [Note] InnoDB: Buffer pool(s) load completed at 260327 16:58:03
+2026-03-27T08:58:03.652836Z 0 [Note] Found ca.pem, server-cert.pem and server-key.pem in data directory. Trying to enable SSL support using them.
+2026-03-27T08:58:03.652871Z 0 [Note] Skipping generation of SSL certificates as certificate files are present in data directory.
+2026-03-27T08:58:03.652879Z 0 [Warning] A deprecated TLS version TLSv1 is enabled. Please use TLSv1.2 or higher.
+2026-03-27T08:58:03.652885Z 0 [Warning] A deprecated TLS version TLSv1.1 is enabled. Please use TLSv1.2 or higher.
+2026-03-27T08:58:03.660950Z 0 [Warning] CA certificate ca.pem is self signed.
+2026-03-27T08:58:03.661038Z 0 [Note] Skipping generation of RSA key pair as key files are present in data directory.
+2026-03-27T08:58:03.663180Z 0 [Note] Server hostname (bind-address): '0.0.0.0'; port: 3306
+2026-03-27T08:58:03.663220Z 0 [Note]   - '0.0.0.0' resolves to '0.0.0.0';
+2026-03-27T08:58:03.663275Z 0 [Note] Server socket created on IP: '0.0.0.0'.
+2026-03-27T08:58:03.678247Z 0 [Note] Event Scheduler: Loaded 0 events
+2026-03-27T08:58:03.678656Z 0 [Note] /usr/sbin/mysqld: ready for connections.
+Version: '5.7.44'  socket: '/var/lib/mysql/mysql.sock'  port: 3306  MySQL Community Server (GPL)
+2026-03-27T08:59:44.038750Z 2 [Warning] Hostname 'bogon' does not resolve to '192.168.71.1'.
+2026-03-27T08:59:44.038810Z 2 [Note] Hostname 'bogon' has the following IP addresses:
+2026-03-27T08:59:44.038828Z 2 [Note]  - fe80::af50:1973:c03:aa88%ens33
+2026-03-27T08:59:44.038973Z 2 [Note]  - fd15:4ba5:5a2b:1008:9807:bc05:26d9:a14a%2
+2026-03-27T08:59:44.039452Z 2 [Note]  - 192.168.71.5

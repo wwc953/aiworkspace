@@ -1,0 +1,20 @@
+server:
+  port: 8081
+
+netty:
+  server:
+    port: 8082
+    host: 0.0.0.0
+    boss-threads: 1
+    worker-threads: 4
+    backlog: 1024
+
+logging:
+  level:
+    com.netty.springcloud: DEBUG
+    io.netty: INFO
+
+# Spring Boot配置
+spring:
+  application:
+    name: netty-service
