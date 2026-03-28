@@ -26,24 +26,25 @@ DB_CONFIG = {
 MAX_RETRY = 3  # 最大重试次数
 SLEEP_INTERVAL = 0.1  # 没有任务时的休眠时间 (秒)
 MAX_CONCURRENT_TASKS = 100  # 每批处理的任务数量，避免连接过多
-MAX_WORKERS = 10  # 最大工作线程数
+MAX_WORKERS = 100  # 最大工作线程数
 
 
 # ================= 主程序 =================
-def process_single_task(queue_id, order_id, conn):
-    """处理单个任务的函数 - 确保线程安全"""
+def process_single_task(queue_id, order_id):
+    """处理单个任务的函数 - 确保线程安全，自己创建数据库连接"""
+    conn = None
     cursor = None
     try:
-        # 1. 确保每个线程使用自己的游标 - 添加线程锁保护游标创建
-        with threading.Lock():
-            cursor = conn.cursor(pymysql.cursors.DictCursor)
+        # 1. 为每个任务创建新的数据库连接
+        conn = pymysql.connect(**DB_CONFIG)
+        cursor = conn.cursor(pymysql.cursors.DictCursor)
 
         # 2. 开启事务
         conn.begin()
 
         # 3. 记录日志 - 添加线程安全日志处理
-        with threading.Lock():
-            logging.info(f"Processing Queue ID: {queue_id}, Order ID: {order_id}")
+        # with threading.Lock():
+        #     logging.info(f"Processing Queue ID: {queue_id}, Order ID: {order_id}")
 
         # 4. 调用 UDF (核心逻辑)
         udf_sql = """
@@ -95,9 +96,11 @@ def process_single_task(queue_id, order_id, conn):
         return False
 
     finally:
-        # 确保游标被正确关闭
+        # 确保游标和连接被正确关闭
         if cursor:
             cursor.close()
+        if conn:
+            conn.close()
 
 
 def worker_thread(task_queue):
@@ -167,8 +170,7 @@ def process_queue():
                         task_conns[row['id']] = queue_conn
                         task_list.append({
                             'queue_id': row['id'],
-                            'order_id': row['order_id'],
-                            'conn': queue_conn
+                            'order_id': row['order_id']
                         })
 
                     # 3. 定义线程处理函数
@@ -184,13 +186,12 @@ def process_queue():
 
                                 queue_id = task['queue_id']
                                 order_id = task['order_id']
-                                conn = task['conn']
 
                                 # 记录线程信息
                                 # logging.info(f"[{thread_name}] Processing Queue ID: {queue_id}, Order ID: {order_id}")
 
                                 # 调用原有的单个任务处理逻辑
-                                process_single_task(queue_id, order_id, conn)
+                                process_single_task(queue_id, order_id)
 
                             except Exception as e:
                                 logging.error(f"[{thread_name}] Thread processing error: {e}")
