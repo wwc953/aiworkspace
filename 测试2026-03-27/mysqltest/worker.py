@@ -7,7 +7,6 @@ import logging
 import sys
 import threading
 from threading import Thread
-from queue import Queue
 
 # ================= 配置 =================
 DB_CONFIG = {
@@ -26,8 +25,8 @@ DB_CONFIG = {
 
 MAX_RETRY = 3  # 最大重试次数
 SLEEP_INTERVAL = 0.1  # 没有任务时的休眠时间 (秒)
-BATCH_SIZE = 50  # 每批处理的任务数量，避免连接过多
-MAX_WORKERS = 5  # 最大工作线程数
+MAX_CONCURRENT_TASKS = 100  # 每批处理的任务数量，避免连接过多
+MAX_WORKERS = 10  # 最大工作线程数
 
 
 # ================= 主程序 =================
@@ -119,13 +118,9 @@ def worker_thread(task_queue):
 
 
 def process_queue():
-    """修改后的 process_queue 函数 - 先查询所有数据，然后使用多线程执行"""
+    """修改后的 process_queue 函数 - 限制并发连接数，分批处理任务"""
     conn = None
-    worker_threads = []
-    task_queue = Queue()
-    num_workers = MAX_WORKERS  # 设置工作线程数量
-    batch_size = 50  # 限制每批处理的任务数量，避免连接过多
-
+ 
     try:
         conn = pymysql.connect(**DB_CONFIG)
         cursor = conn.cursor(pymysql.cursors.DictCursor)
@@ -140,9 +135,8 @@ def process_queue():
                 FROM orders_queue
                 WHERE attempt_count < %s
                 ORDER BY id ASC
-                LIMIT %s
                 """
-                cursor.execute(select_sql, (MAX_RETRY, batch_size))
+                cursor.execute(select_sql, (MAX_RETRY,))
                 rows = cursor.fetchall()
 
                 if not rows:
@@ -152,43 +146,97 @@ def process_queue():
 
                 logging.info(f"Found {len(rows)} tasks to process")
 
-                # 2. 为每个任务创建一个独立的数据库连接
-                task_conns = {}
-                for row in rows:
-                    queue_conn = pymysql.connect(**DB_CONFIG)
-                    task_conns[(row['id'], row['order_id'])] = queue_conn
+                # 2. 分批处理任务，避免连接过多
+                total_batches = (len(rows) + MAX_CONCURRENT_TASKS - 1) // MAX_CONCURRENT_TASKS
+                logging.info(f"Total batches to process: {total_batches}")
 
-                # 3. 启动工作线程
-                for _ in range(num_workers):
-                    thread = Thread(target=worker_thread, args=(task_queue,))
-                    thread.daemon = True
-                    thread.start()
-                    worker_threads.append(thread)
+                for batch_idx, batch_start in enumerate(range(0, len(rows), MAX_CONCURRENT_TASKS)):
+                    batch_end = min(batch_start + MAX_CONCURRENT_TASKS, len(rows))
+                    batch_rows = rows[batch_start:batch_end]
+                    batch_number = batch_idx + 1
 
-                # 4. 将任务添加到队列
-                for row in rows:
-                    task_queue.put((row['id'], row['order_id'], task_conns[(row['id'], row['order_id'])]))
+                    logging.info(f"Starting batch {batch_number}/{total_batches}: {len(batch_rows)} tasks")
 
-                # 5. 等待所有任务完成
-                task_queue.join()
+                    # 为每批任务创建连接和线程
+                    task_list = []
+                    task_conns = {}
 
-                # 6. 关闭所有任务连接
-                for conn in task_conns.values():
-                    conn.close()
+                    for row in batch_rows:
+                        # 为每个任务创建一个独立的数据库连接
+                        queue_conn = pymysql.connect(**DB_CONFIG)
+                        task_conns[row['id']] = queue_conn
+                        task_list.append({
+                            'queue_id': row['id'],
+                            'order_id': row['order_id'],
+                            'conn': queue_conn
+                        })
 
-                # 7. 清理已完成的任务
-                cleanup_sql = "DELETE FROM orders_queue WHERE id IN (%s)" % ','.join(['%s'] * len(rows))
-                cursor.execute(cleanup_sql, [row['id'] for row in rows])
-                conn.commit()
+                    # 3. 定义线程处理函数
+                    def process_batch_tasks():
+                        thread_name = threading.current_thread().name
+                        while task_list:
+                            try:
+                                # 从List中获取数据（线程安全）
+                                with threading.Lock():
+                                    if not task_list:
+                                        break
+                                    task = task_list.pop(0)
+
+                                queue_id = task['queue_id']
+                                order_id = task['order_id']
+                                conn = task['conn']
+
+                                # 记录线程信息
+                                # logging.info(f"[{thread_name}] Processing Queue ID: {queue_id}, Order ID: {order_id}")
+
+                                # 调用原有的单个任务处理逻辑
+                                process_single_task(queue_id, order_id, conn)
+
+                            except Exception as e:
+                                logging.error(f"[{thread_name}] Thread processing error: {e}")
+
+                    # 4. 启动工作线程（限制并发数）
+                    num_workers = min(MAX_WORKERS, len(task_list))  
+                    threads = []
+                    for i in range(num_workers):
+                        thread_name = f"Worker-{i+1}"
+                        logging.info(f"Starting {thread_name}")
+                        thread = Thread(target=process_batch_tasks, name=thread_name)
+                        thread.daemon = True
+                        thread.start()
+                        threads.append(thread)
+
+                    # 5. 等待当前批次所有线程完成
+                    for thread in threads:
+                        thread_name = thread.name
+                        thread.join(timeout=60)  # 增加超时时间
+                        logging.info(f"Completed {thread_name}")
+
+                    # 6. 清理当前批次的任务
+                    if batch_rows:
+                        cleanup_sql = "DELETE FROM orders_queue WHERE id IN (%s)" % ','.join(['%s'] * len(batch_rows))
+                        cursor.execute(cleanup_sql, [row['id'] for row in batch_rows])
+                        conn.commit()
+
+                    # 7. 关闭当前批次的所有任务连接
+                    for queue_conn in task_conns.values():
+                        try:
+                            queue_conn.close()
+                        except:
+                            pass
+
+                    remaining_tasks = len(rows) - batch_end
+                    next_batch = batch_idx + 2 if (batch_idx + 1) < total_batches else "All"
+                    logging.info(f"Batch {batch_number}/{total_batches} completed. Remaining tasks: {remaining_tasks}. Next: {next_batch}")
 
                 logging.info("All tasks completed. Waiting for new tasks...")
 
             except Exception as e:
                 logging.error(f"Main loop error: {e}")
                 # 确保在异常时关闭连接
-                for conn in task_conns.values():
+                for queue_conn in task_conns.values():
                     try:
-                        conn.close()
+                        queue_conn.close()
                     except:
                         pass
                 time.sleep(1)
@@ -200,10 +248,6 @@ def process_queue():
         logging.critical(f"Worker Fatal Error: {e}")
         sys.exit(1)
     finally:
-        # 清理资源
-        for thread in worker_threads:
-            if thread.is_alive():
-                task_queue.put(None)  # 发送终止信号
         if conn:
             conn.close()
 
