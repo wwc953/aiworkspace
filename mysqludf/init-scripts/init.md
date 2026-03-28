@@ -12,8 +12,6 @@ cd /home/mysql-udf-http-1.0
 ./configure --prefix=/usr/local/mysql --with-mysql=/usr/bin/mysql_config --libdir=/opt/rh/rh-mysql57/root/usr/lib64/mysql/plugin
 make && make install
 
-# chmod 775 /opt/rh/rh-mysql57/root/usr/lib64/mysql/plugin/mysql-udf-http-1.0.so
-
 
 mysql -h 127.0.0.1 -P 3306 -u root -p'rootpassword' < /home/setup-udf.sql
 
