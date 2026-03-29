@@ -1,3 +1,4 @@
+```
 -- root用户进入
 docker exec -it --user root 1e3346fab5a32c06894b16bf7084dce8b160a1d9638a8bc3ce4a779366cbfb58  bash
 
@@ -17,3 +18,4 @@ make && make install
 
 mysql -h 127.0.0.1 -P 3306 -u root -p'rootpassword' < /home/setup-udf.sql
 
+```
