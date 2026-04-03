@@ -832,7 +832,8 @@ my_bool http_post_file_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
 
     // Remaining arguments are field components (string)
     // Format: name, filename, content_type, data (each as string)
-    for (int i = (args->arg_count >= 7 ? 3 : 2); i < args->arg_count; i++) {
+    int i;
+    for (i = (args->arg_count >= 7 ? 3 : 2); i < args->arg_count; i++) {
         args->arg_type[i] = STRING_RESULT;
     }
 
@@ -890,9 +891,6 @@ char *http_post_file(UDF_INIT *initid, UDF_ARGS *args,
 
     if (curl)
     {
-        // Initialize multi handle for file uploads
-        multi_handle = curl_mime_init(curl);
-
         // Parse headers (second argument)
         if (args->args[1] && args->lengths[1] > 0)
         {
@@ -933,7 +931,11 @@ char *http_post_file(UDF_INIT *initid, UDF_ARGS *args,
 
         // Parse form fields from arguments
         // Format: URL, headers, [timeout,] name1, filename1, content_type1, name2, filename2, content_type2, ...
-        for (int i = 0; i < field_count; i++) {
+        struct curl_httppost *formpost = NULL;
+        struct curl_httppost *lastptr = NULL;
+
+        int i;
+        for (i = 0; i < field_count; i++) {
             int arg_offset = base_offset + i * 3;
 
             if (arg_offset + 2 >= args->arg_count) break;
@@ -947,21 +949,14 @@ char *http_post_file(UDF_INIT *initid, UDF_ARGS *args,
                 continue;
             }
 
-            // Create form part for file upload
-            struct curl_mimepart *part = curl_mime_addpart(multi_handle);
-
-            // Set field name
-            curl_mime_name(part, field_name);
-
-            // Set filename
-            curl_mime_filename(part, filename);
-
-            // Set content type
-            curl_mime_type(part, content_type);
-
-            // For binary data, we'll use a simple string representation
-            // In a real implementation, you might want to pass raw binary data differently
-            curl_mime_data(part, "", CURL_ZERO_TERMINATED);  // Empty but valid
+            // Add form field for file upload
+            // Note: This is a simplified version. For full file upload support,
+            // you would need to read the actual file data from the provided data parameter
+            curl_formadd(&formpost, &lastptr,
+                         CURLFORM_COPYNAME, field_name,
+                         CURLFORM_FILE, filename,
+                         CURLFORM_CONTENTTYPE, content_type,
+                         CURLFORM_END);
         }
 
         // Configure the request
@@ -979,7 +974,7 @@ char *http_post_file(UDF_INIT *initid, UDF_ARGS *args,
         }
 
         // Set multipart form data
-        curl_easy_setopt(curl, CURLOPT_MIMEPOST, multi_handle);
+        curl_easy_setopt(curl, CURLOPT_HTTPPOST, formpost);
 
         // Perform the request
         retref = curl_easy_perform(curl);
@@ -990,7 +985,7 @@ char *http_post_file(UDF_INIT *initid, UDF_ARGS *args,
         }
 
         // Cleanup
-        curl_mime_free(multi_handle);
+        curl_formfree(formpost);
         if (chunk)
             curl_slist_free_all(chunk);
         if (headers_str)
