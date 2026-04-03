@@ -796,20 +796,43 @@ my_bool http_post_file_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
 {
     st_curl_results *container;
 
-    if (args->arg_count < 4 || (args->arg_count - 1) % 3 != 0 || args->arg_count > (1 + MAX_FORM_FIELDS*3))
+    // Check minimum arguments: url + headers + at least one field (name, filename, content_type, data)
+    // Plus optional timeout parameter
+    int min_args = 6; // url + headers + field(name,filename,content_type,data)
+    if (args->arg_count >= 7 && (args->arg_count - 3) % 3 == 0) {
+        // Has timeout parameter
+        min_args = 7;
+    }
+
+    if (args->arg_count < min_args || (args->arg_count - (min_args==7 ? 3 : 2)) % 3 != 0 ||
+        args->arg_count > (min_args + MAX_FORM_FIELDS*3))
     {
-        strncpy(message,
-                "arguments must be supplied: http_post_file('<url>','<field_name1>','<filename>1','<content_type1>','<data1>',...).",
-                MYSQL_ERRMSG_SIZE);
+        if (args->arg_count >= 7 && (args->arg_count - 3) % 3 == 0) {
+            strncpy(message,
+                    "arguments must be supplied: http_post_file('<url>','<headers>','<timeout_ms>','<field_name1>','<filename>1','<content_type1>','<data1>',...).",
+                    MYSQL_ERRMSG_SIZE);
+        } else {
+            strncpy(message,
+                    "arguments must be supplied: http_post_file('<url>','<headers>','<field_name1>','<filename>1','<content_type1>','<data1>',...).",
+                    MYSQL_ERRMSG_SIZE);
+        }
         return 1;
     }
 
     // First argument is URL (string)
     args->arg_type[0] = STRING_RESULT;
 
+    // Second argument is headers (string)
+    args->arg_type[1] = STRING_RESULT;
+
+    // Third argument is optional timeout (string)
+    if (args->arg_count >= 7) {
+        args->arg_type[2] = STRING_RESULT;
+    }
+
     // Remaining arguments are field components (string)
     // Format: name, filename, content_type, data (each as string)
-    for (int i = 1; i < args->arg_count; i++) {
+    for (int i = (args->arg_count >= 7 ? 3 : 2); i < args->arg_count; i++) {
         args->arg_type[i] = STRING_RESULT;
     }
 
@@ -843,12 +866,18 @@ char *http_post_file(UDF_INIT *initid, UDF_ARGS *args,
     CURLcode retref;
     CURL *curl;
     st_curl_results *res = (st_curl_results *)initid->ptr;
-
+    char *headers_str = NULL;
+    char *timeout_str = NULL;
     struct curl_slist *chunk = NULL;
     CURL *multi_handle = NULL;
-    int field_count = (args->arg_count - 1) / 3;  // Each field has 3 components
+    int field_count = (args->arg_count - (args->arg_count >= 7 ? 3 : 2)) / 3;  // Each field has 3 components
+    long timeout_ms = REQ_TIMEOUT_MS;
 
-    if (!res || !initid->ptr || !args || args->arg_count < 5 || (args->arg_count - 1) % 3 != 0)
+    // Determine offset based on whether timeout is present
+    int base_offset = (args->arg_count >= 7 ? 3 : 2);
+
+    if (!res || !initid->ptr || !args || args->arg_count < base_offset + 3 ||
+        (args->arg_count - base_offset) % 3 != 0)
     {
         *length = 0;
         if (chunk) curl_slist_free_all(chunk);
@@ -864,10 +893,48 @@ char *http_post_file(UDF_INIT *initid, UDF_ARGS *args,
         // Initialize multi handle for file uploads
         multi_handle = curl_mime_init(curl);
 
+        // Parse headers (second argument)
+        if (args->args[1] && args->lengths[1] > 0)
+        {
+            headers_str = strndup(args->args[1], args->lengths[1]);
+            if (headers_str)
+            {
+                char *line = strtok(headers_str, "\n");
+                while (line != NULL)
+                {
+                    // Remove leading/trailing whitespace
+                    while (*line == ' ' || *line == '\t')
+                        line++;
+                    char *end = line + strlen(line) - 1;
+                    while (end > line && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n'))
+                        *end-- = '\0';
+
+                    if (strlen(line) > 0)
+                        chunk = curl_slist_append(chunk, line);
+                    line = strtok(NULL, "\n");
+                }
+            }
+        }
+
+        // Parse timeout if provided (third argument when present)
+        if (args->arg_count >= 7 && args->args[2] && args->lengths[2] > 0)
+        {
+            timeout_str = strndup(args->args[2], args->lengths[2]);
+            if (timeout_str)
+            {
+                char *endptr;
+                long val = strtol(timeout_str, &endptr, 10);
+                if (*timeout_str != '\0' && *endptr == '\0' && val > 0)
+                {
+                    timeout_ms = val;
+                }
+            }
+        }
+
         // Parse form fields from arguments
-        // Format: URL, name1, filename1, content_type1, name2, filename2, content_type2, ...
+        // Format: URL, headers, [timeout,] name1, filename1, content_type1, name2, filename2, content_type2, ...
         for (int i = 0; i < field_count; i++) {
-            int arg_offset = 1 + i * 3;  // Skip URL, get field components
+            int arg_offset = base_offset + i * 3;
 
             if (arg_offset + 2 >= args->arg_count) break;
 
@@ -903,7 +970,13 @@ char *http_post_file(UDF_INIT *initid, UDF_ARGS *args,
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)res);
         curl_easy_setopt(curl, CURLOPT_USERAGENT, "mysql-udf-http/1.0");
         curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, err_msg);
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, REQ_TIMEOUT_MS);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeout_ms);
+
+        // Add custom headers if provided
+        if (chunk)
+        {
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, chunk);
+        }
 
         // Set multipart form data
         curl_easy_setopt(curl, CURLOPT_MIMEPOST, multi_handle);
@@ -918,6 +991,12 @@ char *http_post_file(UDF_INIT *initid, UDF_ARGS *args,
 
         // Cleanup
         curl_mime_free(multi_handle);
+        if (chunk)
+            curl_slist_free_all(chunk);
+        if (headers_str)
+            free(headers_str);
+        if (timeout_str)
+            free(timeout_str);
     }
     else
     {

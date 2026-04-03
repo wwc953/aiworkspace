@@ -74,6 +74,51 @@ SELECT http_post_file(
 );
 
 
+---带请求头和超时时间的实例
+多文件上传示例
+
+-- 多文件上传，带认证头和超时
+SELECT http_post_file(
+    'https://api.example.com/multiple-upload',
+    
+    'Authorization: Bearer your-token
+X-Upload-Type: batch
+X-Client-Version: 2.1.0
+Connection: keep-alive',  -- 请求头
+    
+    '30000',  -- 超时时间：30秒
+    
+    'avatar',           -- 第一个文件字段名
+    'profile.jpg',      -- 文件名
+    'image/jpeg',       -- 内容类型
+    LOAD_FILE('C:\\uploads\\profile.jpg'),  -- 文件数据
+    
+    'document',         -- 第二个文件字段名
+    'report.pdf',       -- 文件名
+    'application/pdf',  -- 内容类型
+    LOAD_FILE('C:\\docs\\report.pdf')       -- 文件数据
+);
+高级示例：REST API调用
+
+-- 调用REST API上传文件，带JSON格式认证
+SELECT http_post_file(
+    'https://api.cloud-storage.com/v1/files/upload',
+    
+    'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
+Accept: application/json
+X-API-Key: your-api-key-here
+X-Request-ID: ' || UUID(),  -- 请求头
+    
+    '15000',  -- 超时：15秒
+    
+    'file',           -- 字段名
+    'backup.zip',     -- 文件名
+    'application/zip', -- 内容类型
+    LOAD_FILE('C:\\backups\\database-backup.zip')  -- 二进制文件数据
+);
+
+
 
 Spring Boot Integration
 1. Create a File Upload Service
