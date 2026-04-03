@@ -16,6 +16,63 @@ SELECT http_post_file(
 );
 
 
+Usage Examples
+Example 1: Basic File Upload
+
+-- Upload a single file
+SELECT http_post_file(
+    'https://api.example.com/upload',
+    'file',           -- Field name
+    'document.pdf',   -- Filename
+    'application/pdf',-- Content type
+    '%PDF-1.4...'     -- File content (base64 or hex encoded)
+);
+Example 2: Multiple Files Upload
+
+-- Upload multiple files in one request
+SELECT http_post_file(
+    'https://api.example.com/multi-upload',
+    'avatar',         -- First field
+    'profile.jpg',    -- Filename 1
+    'image/jpeg',     -- Content type 1
+    'binary_data_1',  -- File data 1
+    
+    'document',       -- Second field  
+    'report.docx',    -- Filename 2
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document', -- Content type 2
+    'binary_data_2'   -- File data 2
+);
+Example 3: Form Data with File
+
+-- Combine regular form data with file upload
+SELECT http_post_file(
+    'https://api.example.com/submit-form',
+    'username',       -- Regular field
+    '',              -- Empty filename for non-file fields
+    'text/plain',    -- Content type
+    'john_doe',       -- Text data
+    
+    'profile_image',  -- File field
+    'avatar.png',     -- Filename
+    'image/png',      -- Content type
+    'iVBORw0KGgoAAAANSUhEUg...'  -- PNG image data
+);
+Example 4: JSON API with File
+
+-- Send file to REST API endpoint
+SELECT http_post_file(
+    'https://api.cloud-storage.com/files',
+    'metadata',       -- JSON metadata field
+    '',              -- No filename for JSON data
+    'application/json', -- JSON content type
+    '{"title":"My Document","tags":["important"]}',
+    
+    'file_content',   -- The actual file
+    'backup.zip',     -- Zip filename
+    'application/zip', -- ZIP content type
+    'UEsDBBQAAAAI...' -- ZIP file data
+);
+
 
 
 Spring Boot Integration
