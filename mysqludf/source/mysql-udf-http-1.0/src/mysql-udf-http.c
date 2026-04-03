@@ -50,6 +50,18 @@ result_cb(void *ptr, size_t size, size_t nmemb, void *data)
     }
     return realsize;
 }
+
+static void cleanup_allocated_strings(char **headers_str, char **timeout_str)
+{
+    if (*headers_str) {
+        free(*headers_str);
+        *headers_str = NULL;
+    }
+    if (*timeout_str) {
+        free(*timeout_str);
+        *timeout_str = NULL;
+    }
+}
 static CURL *my_container_curl_init(st_curl_results *res)
 {
     CURL *curl = NULL;
@@ -93,11 +105,16 @@ my_bool http_get_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
     initid->max_length = CURL_UDF_MAX_SIZE;
     container = (st_curl_results *)malloc(sizeof(st_curl_results));
 
+    if (!container)
+    {
+        strncpy(message, "out of memory", MYSQL_ERRMSG_SIZE);
+        return 1;
+    }
+
     if (!my_container_curl_init(container))
     {
-        if (container)
-            free(container);
-        strncpy(message, "out of memory", MYSQL_ERRMSG_SIZE);
+        free(container);
+        strncpy(message, "curl initialization failed", MYSQL_ERRMSG_SIZE);
         return 1;
     }
     initid->ptr = (char *)container;
@@ -183,11 +200,16 @@ my_bool http_post_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
     initid->max_length = CURL_UDF_MAX_SIZE;
     container = (st_curl_results *)malloc(sizeof(st_curl_results));
 
+    if (!container)
+    {
+        strncpy(message, "out of memory", MYSQL_ERRMSG_SIZE);
+        return 1;
+    }
+
     if (!my_container_curl_init(container))
     {
-        if (container)
-            free(container);
-        strncpy(message, "out of memory", MYSQL_ERRMSG_SIZE);
+        free(container);
+        strncpy(message, "curl initialization failed", MYSQL_ERRMSG_SIZE);
         return 1;
     }
     initid->ptr = (char *)container;
@@ -279,11 +301,16 @@ my_bool http_put_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
     initid->max_length = CURL_UDF_MAX_SIZE;
     container = (st_curl_results *)malloc(sizeof(st_curl_results));
 
+    if (!container)
+    {
+        strncpy(message, "out of memory", MYSQL_ERRMSG_SIZE);
+        return 1;
+    }
+
     if (!my_container_curl_init(container))
     {
-        if (container)
-            free(container);
-        strncpy(message, "out of memory", MYSQL_ERRMSG_SIZE);
+        free(container);
+        strncpy(message, "curl initialization failed", MYSQL_ERRMSG_SIZE);
         return 1;
     }
     initid->ptr = (char *)container;
@@ -376,11 +403,16 @@ my_bool http_delete_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
     initid->max_length = CURL_UDF_MAX_SIZE;
     container = (st_curl_results *)malloc(sizeof(st_curl_results));
 
+    if (!container)
+    {
+        strncpy(message, "out of memory", MYSQL_ERRMSG_SIZE);
+        return 1;
+    }
+
     if (!my_container_curl_init(container))
     {
-        if (container)
-            free(container);
-        strncpy(message, "out of memory", MYSQL_ERRMSG_SIZE);
+        free(container);
+        strncpy(message, "curl initialization failed", MYSQL_ERRMSG_SIZE);
         return 1;
     }
     initid->ptr = (char *)container;
@@ -470,11 +502,16 @@ my_bool http_get_headers_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
     initid->max_length = CURL_UDF_MAX_SIZE;
     container = (st_curl_results *)malloc(sizeof(st_curl_results));
 
+    if (!container)
+    {
+        strncpy(message, "out of memory", MYSQL_ERRMSG_SIZE);
+        return 1;
+    }
+
     if (!my_container_curl_init(container))
     {
-        if (container)
-            free(container);
-        strncpy(message, "out of memory", MYSQL_ERRMSG_SIZE);
+        free(container);
+        strncpy(message, "curl initialization failed", MYSQL_ERRMSG_SIZE);
         return 1;
     }
     initid->ptr = (char *)container;
@@ -492,10 +529,13 @@ char *http_get_headers(UDF_INIT *initid, UDF_ARGS *args,
     char err_msg[CURL_ERROR_SIZE] = {0};
     CURL *curl;
     st_curl_results *res = (st_curl_results *)initid->ptr;
+    char *headers_str = NULL;
+    char *timeout_str = NULL;
 
     if (!res || !initid->ptr || !args || args->arg_count < 3)
     {
         *length = 0;
+        cleanup_allocated_strings(&headers_str, &timeout_str);
         return NULL;
     }
 
@@ -512,7 +552,7 @@ char *http_get_headers(UDF_INIT *initid, UDF_ARGS *args,
         // 解析请求头字符串
         if (args->args[1] && args->lengths[1] > 0)
         {
-            char *headers_str = strndup(args->args[1], args->lengths[1]);
+            headers_str = strndup(args->args[1], args->lengths[1]);
             if (headers_str)
             {
                 char *line = strtok(headers_str, "\n");
@@ -529,7 +569,7 @@ char *http_get_headers(UDF_INIT *initid, UDF_ARGS *args,
                         chunk = curl_slist_append(chunk, line);
                     line = strtok(NULL, "\n");
                 }
-                free(headers_str);
+                // 不需要立即释放，strtok 使用同一块内存
             }
         }
 
@@ -537,7 +577,7 @@ char *http_get_headers(UDF_INIT *initid, UDF_ARGS *args,
         long timeout_ms = REQ_TIMEOUT_MS;
         if (args->args[2] && args->lengths[2] > 0)
         {
-            char *timeout_str = strndup(args->args[2], args->lengths[2]);
+            timeout_str = strndup(args->args[2], args->lengths[2]);
             if (timeout_str)
             {
                 char *endptr;
@@ -546,7 +586,6 @@ char *http_get_headers(UDF_INIT *initid, UDF_ARGS *args,
                 {
                     timeout_ms = val;
                 }
-                free(timeout_str);
             }
         }
 
@@ -566,13 +605,17 @@ char *http_get_headers(UDF_INIT *initid, UDF_ARGS *args,
             *length = 0;
         }
 
-        // 释放自定义请求头链表
+        // 释放自定义请求头链表和分配的字符串
         if (chunk)
             curl_slist_free_all(chunk);
+
+        // 释放分配的字符串内存
+        cleanup_allocated_strings(&headers_str, &timeout_str);
     }
     else
     {
         *length = 0;
+        cleanup_allocated_strings(&headers_str, &timeout_str);
     }
 
     *length = res->size;
@@ -614,11 +657,16 @@ my_bool http_post_headers_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
     initid->max_length = CURL_UDF_MAX_SIZE;
     container = (st_curl_results *)malloc(sizeof(st_curl_results));
 
+    if (!container)
+    {
+        strncpy(message, "out of memory", MYSQL_ERRMSG_SIZE);
+        return 1;
+    }
+
     if (!my_container_curl_init(container))
     {
-        if (container)
-            free(container);
-        strncpy(message, "out of memory", MYSQL_ERRMSG_SIZE);
+        free(container);
+        strncpy(message, "curl initialization failed", MYSQL_ERRMSG_SIZE);
         return 1;
     }
     initid->ptr = (char *)container;
@@ -636,10 +684,13 @@ char *http_post_headers(UDF_INIT *initid, UDF_ARGS *args,
     CURLcode retref;
     CURL *curl;
     st_curl_results *res = (st_curl_results *)initid->ptr;
+    char *headers_str = NULL;
+    char *timeout_str = NULL;
 
     if (!res || !initid->ptr || !args || args->arg_count < 4)
     {
         *length = 0;
+        cleanup_allocated_strings(&headers_str, &timeout_str);
         return NULL;
     }
 
@@ -656,7 +707,7 @@ char *http_post_headers(UDF_INIT *initid, UDF_ARGS *args,
         // 解析请求头字符串
         if (args->args[2] && args->lengths[2] > 0)
         {
-            char *headers_str = strndup(args->args[2], args->lengths[2]);
+            headers_str = strndup(args->args[2], args->lengths[2]);
             if (headers_str)
             {
                 char *line = strtok(headers_str, "\n");
@@ -673,7 +724,7 @@ char *http_post_headers(UDF_INIT *initid, UDF_ARGS *args,
                         chunk = curl_slist_append(chunk, line);
                     line = strtok(NULL, "\n");
                 }
-                free(headers_str);
+                // 不需要立即释放，strtok 使用同一块内存
             }
         }
 
@@ -681,7 +732,7 @@ char *http_post_headers(UDF_INIT *initid, UDF_ARGS *args,
         long timeout_ms = REQ_TIMEOUT_MS;
         if (args->args[3] && args->lengths[3] > 0)
         {
-            char *timeout_str = strndup(args->args[3], args->lengths[3]);
+            timeout_str = strndup(args->args[3], args->lengths[3]);
             if (timeout_str)
             {
                 char *endptr;
@@ -690,7 +741,6 @@ char *http_post_headers(UDF_INIT *initid, UDF_ARGS *args,
                 {
                     timeout_ms = val;
                 }
-                free(timeout_str);
             }
         }
 
@@ -710,13 +760,17 @@ char *http_post_headers(UDF_INIT *initid, UDF_ARGS *args,
             *length = 0;
         }
 
-        // 释放自定义请求头链表
+        // 释放自定义请求头链表和分配的字符串
         if (chunk)
             curl_slist_free_all(chunk);
+
+        // 释放分配的字符串内存
+        cleanup_allocated_strings(&headers_str, &timeout_str);
     }
     else
     {
         *length = 0;
+        cleanup_allocated_strings(&headers_str, &timeout_str);
     }
 
     *length = res->size;
