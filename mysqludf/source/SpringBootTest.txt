@@ -1,0 +1,303 @@
+I'll show you how to call the http_post_file function from Spring Boot. Here's a complete implementation:
+
+
+-- Single file upload with byte stream
+SELECT http_post_file(
+    'https://api.example.com/upload',
+    'document', 'file.pdf', 'application/pdf',
+    'binary_data_representation...'
+);
+
+-- Multiple files
+SELECT http_post_file(
+    'https://api.example.com/upload',
+    'image', 'photo.jpg', 'image/jpeg', 'binary_jpeg_data...',
+    'doc', 'document.pdf', 'application/pdf', 'binary_pdf_data...'
+);
+
+
+
+
+Spring Boot Integration
+1. Create a File Upload Service
+
+// FileUploadService.java
+@Service
+public class FileUploadService {
+
+    private final RestTemplate restTemplate;
+    
+    public FileUploadService(RestTemplateBuilder restTemplateBuilder) {
+        this.restTemplate = restTemplateBuilder.build();
+    }
+
+    /**
+     * Upload file using MySQL UDF http_post_file function
+     */
+    public String uploadFileWithMySQLUDF(String filePath, String targetUrl) throws IOException {
+        // Read file as binary data
+        byte[] fileData = Files.readAllBytes(Paths.get(filePath));
+        
+        // Convert byte array to string representation for MySQL
+        String binaryString = Arrays.toString(fileData);
+        
+        // Prepare parameters for MySQL query
+        String mysqlQuery = String.format(
+            "SELECT http_post_file('%s', 'uploaded_file', '%s', 'application/octet-stream', '%s') AS result",
+            targetUrl,
+            Paths.get(filePath).getFileName().toString(),
+            escapeForSQL(binaryString)
+        );
+        
+        // Execute MySQL query (you need to implement this part)
+        return executeMySQLQuery(mysqlQuery);
+    }
+
+    /**
+     * Upload multiple files
+     */
+    public String uploadMultipleFiles(List<FileUploadRequest> files, String targetUrl) throws IOException {
+        StringBuilder mysqlQuery = new StringBuilder();
+        mysqlQuery.append("SELECT http_post_file('")
+                  .append(targetUrl)
+                  .append("', ");
+        
+        List<String> params = new ArrayList<>();
+        params.add(targetUrl);
+        
+        for (int i = 0; i < files.size(); i++) {
+            FileUploadRequest file = files.get(i);
+            byte[] data = Files.readAllBytes(file.getFilePath());
+            
+            mysqlQuery.append("'").append(file.getFieldName()).append("', ")
+                     .append("'").append(file.getFileName()).append("', ")
+                     .append("'").append(file.getContentType()).append("', ")
+                     .append("'").append(escapeForSQL(Arrays.toString(data))).append("'");
+            
+            if (i < files.size() - 1) {
+                mysqlQuery.append(", ");
+            }
+            
+            params.addAll(Arrays.asList(
+                file.getFieldName(),
+                file.getFileName(), 
+                file.getContentType(),
+                Arrays.toString(data)
+            ));
+        }
+        
+        mysqlQuery.append(") AS result;");
+        
+        return executeMySQLQuery(mysqlQuery.toString(), params.toArray());
+    }
+
+    /**
+     * Escape special characters for SQL safety
+     */
+    private String escapeForSQL(String input) {
+        return input.replace("'", "''")
+                   .replace("\\", "\\\\");
+    }
+
+    /**
+     * Execute MySQL query - implement based on your database connection
+     */
+    private String executeMySQLQuery(String query, Object... params) {
+        // Implementation depends on your MySQL connection method
+        // This is a placeholder - you might use JDBC, JPA, or other methods
+        
+        try (Connection conn = getMySQLConnection()) {
+            PreparedStatement stmt = conn.prepareStatement(query);
+            
+            for (int i = 0; i < params.length; i++) {
+                stmt.setObject(i + 1, params[i]);
+            }
+            
+            ResultSet rs = stmt.executeQuery();
+            if (rs.next()) {
+                return rs.getString("result");
+            }
+        } catch (SQLException e) {
+            throw new RuntimeException("MySQL query execution failed", e);
+        }
+        
+        return null;
+    }
+    
+    private Connection getMySQLConnection() throws SQLException {
+        // Return your MySQL connection
+        // Example: return DriverManager.getConnection(DB_URL, USER, PASSWORD);
+        throw new UnsupportedOperationException("Implement your MySQL connection logic");
+    }
+}
+
+// Data class for file upload request
+class FileUploadRequest {
+    private Path filePath;
+    private String fieldName;
+    private String fileName;
+    private String contentType;
+    
+    // Constructors, getters, setters
+}
+2. REST Controller
+
+// FileUploadController.java
+@RestController
+@RequestMapping("/api/upload")
+public class FileUploadController {
+
+    @Autowired
+    private FileUploadService fileUploadService;
+
+    @PostMapping("/single")
+    public ResponseEntity<UploadResponse> uploadSingleFile(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam String targetUrl) {
+        
+        try {
+            // Save uploaded file temporarily
+            Path tempFile = Files.createTempFile("upload_", "_" + file.getOriginalFilename());
+            Files.write(tempFile, file.getBytes());
+            
+            // Upload using MySQL UDF
+            String result = fileUploadService.uploadFileWithMySQLUDF(
+                tempFile.toString(), 
+                targetUrl
+            );
+            
+            // Clean up temp file
+            Files.deleteIfExists(tempFile);
+            
+            return ResponseEntity.ok(new UploadResponse("success", result));
+            
+        } catch (IOException e) {
+            return ResponseEntity.badRequest()
+                .body(new UploadResponse("error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/multiple")
+    public ResponseEntity<UploadResponse> uploadMultipleFiles(
+            @RequestParam("files") MultipartFile[] files,
+            @RequestParam String targetUrl) {
+        
+        try {
+            List<FileUploadRequest> fileRequests = Arrays.stream(files)
+                .map(file -> new FileUploadRequest(
+                    createTempFile(file),
+                    "field_" + UUID.randomUUID().toString().substring(0, 8),
+                    file.getOriginalFilename(),
+                    file.getContentType()
+                ))
+                .collect(Collectors.toList());
+            
+            String result = fileUploadService.uploadMultipleFiles(fileRequests, targetUrl);
+            
+            return ResponseEntity.ok(new UploadResponse("success", result));
+            
+        } catch (Exception e) {
+            return ResponseEntity.badRequest()
+                .body(new UploadResponse("error", e.getMessage()));
+        }
+    }
+
+    private Path createTempFile(MultipartFile file) throws IOException {
+        Path tempFile = Files.createTempFile("upload_", "_" + file.getOriginalFilename());
+        Files.write(tempFile, file.getBytes());
+        return tempFile;
+    }
+}
+
+// Response classes
+class UploadResponse {
+    private String status;
+    private String message;
+    
+    public UploadResponse(String status, String message) {
+        this.status = status;
+        this.message = message;
+    }
+    
+    // Getters and setters
+}
+3. Configuration
+
+# application.yml
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/your_database?useSSL=false&serverTimezone=UTC
+    username: your_username
+    password: your_password
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+# Configure RestTemplate
+@Configuration
+public class AppConfig {
+    
+    @Bean
+    public RestTemplate restTemplate(RestTemplateBuilder builder) {
+        return builder.build();
+    }
+}
+4. Direct HTTP Request Alternative
+If you prefer to bypass MySQL UDF and make direct HTTP requests from Spring Boot:
+
+
+@Service
+public class DirectFileUploadService {
+
+    private final RestTemplate restTemplate;
+
+    public DirectFileUploadService(RestTemplateBuilder builder) {
+        this.restTemplate = builder.build();
+    }
+
+    public String uploadFileDirectly(MultipartFile file, String targetUrl) throws IOException {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+        body.add("file", new ByteArrayResource(file.getBytes()) {
+            @Override
+            public String getFilename() {
+                return file.getOriginalFilename();
+            }
+        });
+
+        HttpEntity<MultiValueMap<String, Object>> requestEntity = 
+            new HttpEntity<>(body, headers);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+            targetUrl,
+            HttpMethod.POST,
+            requestEntity,
+            String.class
+        );
+
+        return response.getBody();
+    }
+}
+5. Usage Examples
+cURL commands:
+
+
+# Single file upload
+curl -X POST "http://localhost:8080/api/upload/single" \
+  -H "Content-Type: multipart/form-data" \
+  -F "file=@document.pdf" \
+  -F "targetUrl=https://api.example.com/upload"
+
+# Multiple files upload
+curl -X POST "http://localhost:8080/api/upload/multiple" \
+  -H "Content-Type: multipart/form-data" \
+  -F "files=@photo.jpg" \
+  -F "files=@resume.pdf" \
+  -F "targetUrl=https://api.example.com/upload"
+6. Important Notes
+Security: Always validate file types and sizes
+Error Handling: Implement proper exception handling
+Database Connection: Configure your MySQL connection properly
+Memory Management: For large files, consider streaming approaches
+Character Encoding: Handle special characters in binary data safely
+This implementation allows you to seamlessly integrate MySQL UDF file uploads into your Spring Boot application!

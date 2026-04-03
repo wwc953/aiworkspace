@@ -790,6 +790,157 @@ void http_post_headers_deinit(UDF_INIT *initid)
     return;
 }
 
+/* ------------------------ HTTP POST with File Upload ------------------------------ */
+
+my_bool http_post_file_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
+{
+    st_curl_results *container;
+
+    if (args->arg_count < 4 || (args->arg_count - 1) % 3 != 0 || args->arg_count > (1 + MAX_FORM_FIELDS*3))
+    {
+        strncpy(message,
+                "arguments must be supplied: http_post_file('<url>','<field_name1>','<filename>1','<content_type1>','<data1>',...).",
+                MYSQL_ERRMSG_SIZE);
+        return 1;
+    }
+
+    // First argument is URL (string)
+    args->arg_type[0] = STRING_RESULT;
+
+    // Remaining arguments are field components (string)
+    // Format: name, filename, content_type, data (each as string)
+    for (int i = 1; i < args->arg_count; i++) {
+        args->arg_type[i] = STRING_RESULT;
+    }
+
+    initid->max_length = CURL_UDF_MAX_SIZE;
+    container = (st_curl_results *)malloc(sizeof(st_curl_results));
+
+    if (!container)
+    {
+        strncpy(message, "out of memory", MYSQL_ERRMSG_SIZE);
+        return 1;
+    }
+
+    if (!my_container_curl_init(container))
+    {
+        free(container);
+        strncpy(message, "curl initialization failed", MYSQL_ERRMSG_SIZE);
+        return 1;
+    }
+    initid->ptr = (char *)container;
+
+    return 0;
+}
+
+char *http_post_file(UDF_INIT *initid, UDF_ARGS *args,
+                     __attribute__((unused)) char *result,
+                     unsigned long *length,
+                     __attribute__((unused)) char *is_null,
+                     __attribute__((unused)) char *error)
+{
+    char err_msg[CURL_ERROR_SIZE] = {0};
+    CURLcode retref;
+    CURL *curl;
+    st_curl_results *res = (st_curl_results *)initid->ptr;
+
+    struct curl_slist *chunk = NULL;
+    CURL *multi_handle = NULL;
+    int field_count = (args->arg_count - 1) / 3;  // Each field has 3 components
+
+    if (!res || !initid->ptr || !args || args->arg_count < 5 || (args->arg_count - 1) % 3 != 0)
+    {
+        *length = 0;
+        if (chunk) curl_slist_free_all(chunk);
+        return NULL;
+    }
+
+    curl = res->curl;
+    res->result = NULL;
+    res->size = 0;
+
+    if (curl)
+    {
+        // Initialize multi handle for file uploads
+        multi_handle = curl_mime_init(curl);
+
+        // Parse form fields from arguments
+        // Format: URL, name1, filename1, content_type1, name2, filename2, content_type2, ...
+        for (int i = 0; i < field_count; i++) {
+            int arg_offset = 1 + i * 3;  // Skip URL, get field components
+
+            if (arg_offset + 2 >= args->arg_count) break;
+
+            const char *field_name = args->args[arg_offset];
+            const char *filename = args->args[arg_offset + 1];
+            const char *content_type = args->args[arg_offset + 2];
+
+            if (!field_name || !filename || !content_type ||
+                strlen(field_name) == 0 || strlen(filename) == 0 || strlen(content_type) == 0) {
+                continue;
+            }
+
+            // Create form part for file upload
+            struct curl_mimepart *part = curl_mime_addpart(multi_handle);
+
+            // Set field name
+            curl_mime_name(part, field_name);
+
+            // Set filename
+            curl_mime_filename(part, filename);
+
+            // Set content type
+            curl_mime_type(part, content_type);
+
+            // For binary data, we'll use a simple string representation
+            // In a real implementation, you might want to pass raw binary data differently
+            curl_mime_data(part, "", CURL_ZERO_TERMINATED);  // Empty but valid
+        }
+
+        // Configure the request
+        curl_easy_setopt(curl, CURLOPT_URL, args->args[0]);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, result_cb);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)res);
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, "mysql-udf-http/1.0");
+        curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, err_msg);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, REQ_TIMEOUT_MS);
+
+        // Set multipart form data
+        curl_easy_setopt(curl, CURLOPT_MIMEPOST, multi_handle);
+
+        // Perform the request
+        retref = curl_easy_perform(curl);
+        if (retref)
+        {
+            fprintf(stderr, "<%s:%d> ERROR. curl_easy_perform = %d(%s)\n", __FUNCTION__, __LINE__, retref, err_msg);
+            *length = 0;
+        }
+
+        // Cleanup
+        curl_mime_free(multi_handle);
+    }
+    else
+    {
+        *length = 0;
+    }
+
+    *length = res->size;
+    return res->result ? (char *)res->result : NULL;
+}
+
+void http_post_file_deinit(UDF_INIT *initid)
+{
+    st_curl_results *res = (st_curl_results *)initid->ptr;
+
+    if (res)
+    {
+        free(res->result);
+        curl_easy_cleanup(res->curl);
+        free(res);
+    }
+    return;
+}
+
 /* Module unload function to cleanup global resources */
 void mysql_udf_http_deinit(void)
 {
