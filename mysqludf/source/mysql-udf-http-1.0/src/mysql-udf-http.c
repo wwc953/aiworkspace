@@ -898,8 +898,9 @@ my_bool http_post_multipart_multi_init(UDF_INIT *initid, UDF_ARGS *args, char *m
         return 1;
     }
 
+    int i;
     // All arguments are treated as string type
-    for (int i = 0; i < args->arg_count; i++) {
+    for (i = 0; i < args->arg_count; i++) {
         args->arg_type[i] = STRING_RESULT;
     }
 
@@ -965,7 +966,7 @@ my_bool http_post_multipart_multi_init(UDF_INIT *initid, UDF_ARGS *args, char *m
     container->data_lengths = malloc(MAX_FORM_FIELDS * sizeof(unsigned long));
     container->max_files = MAX_FORM_FIELDS;
 
-    for (int i = 0; i < MAX_FORM_FIELDS; i++) {
+    for (i = 0; i < MAX_FORM_FIELDS; i++) {
         container->field_names[i] = NULL;
         container->filenames[i] = NULL;
         container->file_datas[i] = NULL;
@@ -973,7 +974,8 @@ my_bool http_post_multipart_multi_init(UDF_INIT *initid, UDF_ARGS *args, char *m
     }
 
     // Process each file group (uploaded_file, filename, file_data)
-    for (int file_idx = 0; file_idx < file_count; file_idx++)
+    int file_idx;
+    for (file_idx = 0; file_idx < file_count; file_idx++)
     {
         int arg_offset = 4 + (file_idx * 3); // Base offset + file_idx * 3
 
