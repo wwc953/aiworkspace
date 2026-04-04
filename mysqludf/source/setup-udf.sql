@@ -32,18 +32,17 @@ DROP FUNCTION IF EXISTS http_post;
 DROP FUNCTION IF EXISTS http_put;
 DROP FUNCTION IF EXISTS http_delete;
 DROP FUNCTION IF EXISTS http_get_headers;
-DROP FUNCTION IF EXISTS http_post_headers;
-DROP FUNCTION IF EXISTS http_post_file;
-DROP FUNCTION IF EXISTS http_post_files;
+DROP FUNCTION IF EXISTS http_post_headers; 
+DROP FUNCTION IF EXISTS http_post_multipart_multi;
 
 create function http_get returns string soname 'mysql-udf-http.so';
 create function http_post returns string soname 'mysql-udf-http.so';
 create function http_put returns string soname 'mysql-udf-http.so'; 
 create function http_delete returns string soname 'mysql-udf-http.so';
 create function http_get_headers returns string soname 'mysql-udf-http.so';
-create function http_post_headers returns string soname 'mysql-udf-http.so';
-create function http_post_file returns string soname 'mysql-udf-http.so';
-create function http_post_files returns string soname 'mysql-udf-http.so';
+create function http_post_headers returns string soname 'mysql-udf-http.so'; 
+create function http_post_multipart_multi returns string soname 'mysql-udf-http.so';
+
 
  
 -- 1. 创建数据库

@@ -880,9 +880,12 @@ my_bool http_post_multipart_multi_init(UDF_INIT *initid, UDF_ARGS *args, char *m
 
     if (args->arg_count < 7 || (args->arg_count - 4) % 3 != 0)
     {
-        strncpy(message,
-                "invalid argument count for multi-file upload. Use: http_post_multipart_multi('<url>','<headers>','<timeout_ms>','<fieldtxt>', '<uploaded_file1>','<filename>1','<file_data1>', '<uploaded_file2>','<filename>2','<file_data2>', ...)",
-                MYSQL_ERRMSG_SIZE);
+        char err_msg[MYSQL_ERRMSG_SIZE];
+        int file_groups = (args->arg_count - 4) / 3;
+        snprintf(err_msg, sizeof(err_msg),
+                "invalid argument count: got %d, expected 4 + multiple of 3 (for file groups). Got %d file groups.",
+                args->arg_count, file_groups);
+        strncpy(message, err_msg, MYSQL_ERRMSG_SIZE);
         return 1;
     }
 
@@ -960,18 +963,11 @@ my_bool http_post_multipart_multi_init(UDF_INIT *initid, UDF_ARGS *args, char *m
     }
 
     // Initialize multi-file arrays
-    container->field_names = malloc(MAX_FORM_FIELDS * sizeof(char *));
-    container->filenames = malloc(MAX_FORM_FIELDS * sizeof(char *));
-    container->file_datas = malloc(MAX_FORM_FIELDS * sizeof(unsigned char *));
-    container->data_lengths = malloc(MAX_FORM_FIELDS * sizeof(unsigned long));
+    container->field_names = calloc(MAX_FORM_FIELDS, sizeof(char *));
+    container->filenames = calloc(MAX_FORM_FIELDS, sizeof(char *));
+    container->file_datas = calloc(MAX_FORM_FIELDS, sizeof(unsigned char *));
+    container->data_lengths = calloc(MAX_FORM_FIELDS, sizeof(unsigned long));
     container->max_files = MAX_FORM_FIELDS;
-
-    for (i = 0; i < MAX_FORM_FIELDS; i++) {
-        container->field_names[i] = NULL;
-        container->filenames[i] = NULL;
-        container->file_datas[i] = NULL;
-        container->data_lengths[i] = 0;
-    }
 
     // Process each file group (uploaded_file, filename, file_data)
     int file_idx;
@@ -1026,10 +1022,14 @@ my_bool http_post_multipart_multi_init(UDF_INIT *initid, UDF_ARGS *args, char *m
     }
 
     container->file_count = file_count;
-
-    return 0;
-
+ 
     initid->ptr = (char *)container;
+    fprintf(stderr, "init end..... url='%s', arg_count=%d\n", container->url, args->arg_count);
+    if (args && args->arg_count > 0)
+    {
+        fprintf(stderr, "first arg: '%s' (len=%zu)\n",
+                args->args[0], args->lengths[0] ? args->lengths[0] : strlen(args->args[0]));
+    }
     return 0;
 }
 
@@ -1048,6 +1048,7 @@ char *http_post_multipart_multi(UDF_INIT *initid, UDF_ARGS *args,
     if (!res || !initid->ptr || !data || !args || args->arg_count < 7)
     {
         *length = 0;
+        fprintf(stderr, "<%s:%d> ERROR. Invalid parameters\n", __FUNCTION__, __LINE__);
         return NULL;
     }
 
@@ -1055,8 +1056,19 @@ char *http_post_multipart_multi(UDF_INIT *initid, UDF_ARGS *args,
     res->result = NULL;
     res->size = 0;
 
-    if (curl)
+    fprintf(stderr, "11 has res->curl=%p, data=%p\n", res->curl, data);
+    if (!res->curl)
     {
+        *length = 0;
+        fprintf(stderr, "<%s:%d> ERROR. No curl handle available\n", __FUNCTION__, __LINE__);
+        return NULL;
+    }
+
+    if (data && curl)
+    {
+         fprintf(stderr, "into curl..... curl=%p, url='%s', file_count=%d\n",
+                 curl, data->url, data->file_count);
+
         struct curl_slist *chunk = NULL;
         CURLFORMcode formcode;
 
@@ -1064,31 +1076,49 @@ char *http_post_multipart_multi(UDF_INIT *initid, UDF_ARGS *args,
         chunk = curl_slist_append(chunk, "Expect:");
 
         // Add custom headers
-        if (data->headers_str)
+        if (data->headers_str && strlen(data->headers_str) > 0)
         {
-            char *line = strtok(data->headers_str, "\n");
-            while (line != NULL)
+            char *headers_copy = strdup(data->headers_str);
+            if (headers_copy)
             {
-                // Trim whitespace
-                while (*line == ' ' || *line == '\t')
-                    line++;
-                char *end = line + strlen(line) - 1;
-                while (end > line && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n'))
-                    *end-- = '\0';
+                char *line = strtok(headers_copy, "\n");
+                while (line != NULL)
+                {
+                    // Trim whitespace
+                    while (*line == ' ' || *line == '\t')
+                        line++;
+                    char *end = line + strlen(line) - 1;
+                    while (end > line && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n'))
+                        *end-- = '\0';
 
-                if (strlen(line) > 0)
-                    chunk = curl_slist_append(chunk, line);
-                line = strtok(NULL, "\n");
+                    if (strlen(line) > 0)
+                        chunk = curl_slist_append(chunk, line);
+                    line = strtok(NULL, "\n");
+                }
+                free(headers_copy);
             }
         }
 
         // Set request options
-        curl_easy_setopt(curl, CURLOPT_URL, data->url);
+        fprintf(stderr, "Setting URL: '%s'\n", data->url);
+        if (strlen(data->url) > 0)
+        {
+            curl_easy_setopt(curl, CURLOPT_URL, data->url);
+        }
+        else
+        {
+            *length = 0;
+            fprintf(stderr, "<%s:%d> ERROR. URL is empty\n", __FUNCTION__, __LINE__);
+            return NULL;
+        }
+
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, result_cb);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)res);
         curl_easy_setopt(curl, CURLOPT_USERAGENT, "mysql-udf-http/1.0");
         curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, err_msg);
         curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, data->timeout_ms);
+        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+
 
         // Build multipart form
         struct curl_httppost *formpost = NULL;
@@ -1202,9 +1232,9 @@ void http_post_multipart_multi_deinit(UDF_INIT *initid)
 
     if (data)
     {
+        int i;
         // Free multi-file arrays
         if (data->field_names) {
-            int i;
             for (i = 0; i < data->max_files; i++) {
                 if (data->field_names[i]) {
                     free(data->field_names[i]);
@@ -1216,7 +1246,6 @@ void http_post_multipart_multi_deinit(UDF_INIT *initid)
         }
 
         if (data->filenames) {
-            int i;
             for (i = 0; i < data->max_files; i++) {
                 if (data->filenames[i]) {
                     free(data->filenames[i]);
@@ -1227,8 +1256,8 @@ void http_post_multipart_multi_deinit(UDF_INIT *initid)
             data->filenames = NULL;
         }
 
+        // First, handle file_datas - these are the primary allocations
         if (data->file_datas) {
-            int i;
             for (i = 0; i < data->max_files; i++) {
                 if (data->file_datas[i]) {
                     free(data->file_datas[i]);
@@ -1239,21 +1268,27 @@ void http_post_multipart_multi_deinit(UDF_INIT *initid)
             data->file_datas = NULL;
         }
 
+        // Now handle files array - these might point to file_datas or be separate
+        for (i = 0; i < data->file_count; i++)
+        {
+            if (data->files[i].data)
+            {
+                // If this points to a file_datas allocation, it's already freed
+                // Otherwise it was allocated separately and needs freeing
+                data->files[i].data = NULL;
+            }
+        }
+
         if (data->data_lengths) {
             free(data->data_lengths);
             data->data_lengths = NULL;
         }
 
-        // Free file upload field data
-        int i;
+        // Clear file upload field data pointers (already freed in file_datas loop)
         for (i = 0; i < data->file_count; i++)
         {
-            if (data->files[i].data && data->files[i].data != data->file_datas[i])
-            {
-                // Only free if it's not already freed by the above loop
-                free(data->files[i].data);
-                data->files[i].data = NULL;
-            }
+            data->files[i].data = NULL;
+            data->files[i].length = 0;
         }
         for (i = 0; i < data->post_field_count; i++)
         {
