@@ -919,6 +919,12 @@ my_bool http_post_multipart_multi_init(UDF_INIT *initid, UDF_ARGS *args, char *m
     memset(container, 0, sizeof(http_multipart_data));
 
     // Store URL
+    if (!args->args[0] || strlen(args->args[0]) == 0)
+    {
+        strncpy(message, "URL argument cannot be NULL or empty", MYSQL_ERRMSG_SIZE);
+        free(container);
+        return 1;
+    }
     strncpy(container->url, args->args[0], sizeof(container->url) - 1);
     container->url[sizeof(container->url) - 1] = '\0';
 
@@ -1042,27 +1048,28 @@ char *http_post_multipart_multi(UDF_INIT *initid, UDF_ARGS *args,
     CURLcode retref;
     char err_msg[CURL_ERROR_SIZE] = {0};
     CURL *curl;
-    st_curl_results *res = (st_curl_results *)initid->ptr;
     http_multipart_data *data = (http_multipart_data *)initid->ptr;
 
-    if (!res || !initid->ptr || !data || !args || args->arg_count < 7)
+    // Get the curl handle from the data structure (it's stored there during init)
+    curl = data ? ((st_curl_results *)data)->curl : NULL;
+
+    if (!data || !initid->ptr || !args || args->arg_count < 7)
     {
         *length = 0;
         fprintf(stderr, "<%s:%d> ERROR. Invalid parameters\n", __FUNCTION__, __LINE__);
         return NULL;
     }
 
-    curl = res->curl;
-    res->result = NULL;
-    res->size = 0;
-
-    fprintf(stderr, "11 has res->curl=%p, data=%p\n", res->curl, data);
-    if (!res->curl)
+    fprintf(stderr, "11 has data->curl=%p, data=%p\n", data ? ((st_curl_results *)data)->curl : NULL, data);
+    if (!curl)
     {
         *length = 0;
         fprintf(stderr, "<%s:%d> ERROR. No curl handle available\n", __FUNCTION__, __LINE__);
         return NULL;
     }
+
+    // Access result structure through the embedded st_curl_results in http_multipart_data
+    st_curl_results *res = (st_curl_results *)data;
 
     if (data && curl)
     {
@@ -1101,7 +1108,7 @@ char *http_post_multipart_multi(UDF_INIT *initid, UDF_ARGS *args,
 
         // Set request options
         fprintf(stderr, "Setting URL: '%s'\n", data->url);
-        if (strlen(data->url) > 0)
+        if (data->url[0] != '\0')
         {
             curl_easy_setopt(curl, CURLOPT_URL, data->url);
         }
