@@ -928,6 +928,9 @@ my_bool http_post_multipart_multi_init(UDF_INIT *initid, UDF_ARGS *args, char *m
     strncpy(container->url, args->args[0], sizeof(container->url) - 1);
     container->url[sizeof(container->url) - 1] = '\0';
 
+    // Initialize headers_str to NULL (it will be set later if provided)
+    container->headers_str = NULL;
+
     // Parse headers
     if (args->args[1])
     {
@@ -1028,7 +1031,54 @@ my_bool http_post_multipart_multi_init(UDF_INIT *initid, UDF_ARGS *args, char *m
     }
 
     container->file_count = file_count;
- 
+
+    // Initialize curl handle
+    if (!my_container_curl_init(&container->curl_handle))
+    {
+        // Cleanup already allocated resources before returning error
+        int i;
+        for (i = 0; i < container->post_field_count; i++)
+        {
+            if (container->post_fields[i])
+                free(container->post_fields[i]);
+        }
+        if (container->headers_str)
+            free(container->headers_str);
+
+        // Free multi-file arrays
+        if (container->field_names) {
+            for (i = 0; i < container->max_files; i++) {
+                if (container->field_names[i]) {
+                    free(container->field_names[i]);
+                }
+            }
+            free(container->field_names);
+        }
+        if (container->filenames) {
+            for (i = 0; i < container->max_files; i++) {
+                if (container->filenames[i]) {
+                    free(container->filenames[i]);
+                }
+            }
+            free(container->filenames);
+        }
+        if (container->file_datas) {
+            for (i = 0; i < container->max_files; i++) {
+                if (container->file_datas[i]) {
+                    free(container->file_datas[i]);
+                }
+            }
+            free(container->file_datas);
+        }
+        if (container->data_lengths) {
+            free(container->data_lengths);
+        }
+
+        free(container);
+        strncpy(message, "curl initialization failed", MYSQL_ERRMSG_SIZE);
+        return 1;
+    }
+
     initid->ptr = (char *)container;
     fprintf(stderr, "init end..... url='%s', arg_count=%d\n", container->url, args->arg_count);
     if (args && args->arg_count > 0)
@@ -1051,7 +1101,7 @@ char *http_post_multipart_multi(UDF_INIT *initid, UDF_ARGS *args,
     http_multipart_data *data = (http_multipart_data *)initid->ptr;
 
     // Get the curl handle from the data structure (it's stored there during init)
-    curl = data ? ((st_curl_results *)data)->curl : NULL;
+    curl = data ? data->curl_handle.curl : NULL;
 
     if (!data || !initid->ptr || !args || args->arg_count < 7)
     {
@@ -1069,7 +1119,7 @@ char *http_post_multipart_multi(UDF_INIT *initid, UDF_ARGS *args,
     }
 
     // Access result structure through the embedded st_curl_results in http_multipart_data
-    st_curl_results *res = (st_curl_results *)data;
+    st_curl_results *res = &data->curl_handle;
 
     if (data && curl)
     {
@@ -1083,7 +1133,7 @@ char *http_post_multipart_multi(UDF_INIT *initid, UDF_ARGS *args,
         chunk = curl_slist_append(chunk, "Expect:");
 
         // Add custom headers
-        if (data->headers_str && strlen(data->headers_str) > 0)
+        if (data->headers_str && data->headers_str[0] != '\0')
         {
             char *headers_copy = strdup(data->headers_str);
             if (headers_copy)
@@ -1310,6 +1360,13 @@ void http_post_multipart_multi_deinit(UDF_INIT *initid)
         {
             free(data->headers_str);
             data->headers_str = NULL;
+        }
+
+        // Clean up curl handle
+        if (data->curl_handle.curl)
+        {
+            curl_easy_cleanup(data->curl_handle.curl);
+            data->curl_handle.curl = NULL;
         }
 
         free(data);

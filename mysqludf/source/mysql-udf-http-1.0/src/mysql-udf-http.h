@@ -25,6 +25,7 @@ typedef struct {
 
 typedef struct {
   char url[1024];
+  st_curl_results curl_handle;
   file_upload_field files[MAX_FORM_FIELDS];
   int file_count;
   char *post_fields[MAX_FORM_FIELDS];
