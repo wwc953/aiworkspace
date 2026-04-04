@@ -49,24 +49,22 @@ mysqludf/
 docker-compose down
 ```
 
-## 清理数据
+-- 测试
+select CAST(http_get('http://www.baidu.com') AS CHAR CHARACTER SET utf8) as result;
 
-如果需要完全清理数据（包括持久化的数据库文件）：
-
-```bash
-docker-compose down -v
-```
-
-## MySQL UDF HTTP 插件说明
-
-本配置为基础 MySQL 5.7 环境，如需添加 mysql-udf-http 插件：
-
-1. 创建自定义 Dockerfile
-2. 在容器启动时加载插件
-3. 或者通过 SQL 命令动态加载（需要编译好的 .so/.dll 文件）
-
-## 故障排除
-
-- **连接问题**: 确保 MySQL 容器已完全启动后再尝试连接
-- **权限问题**: 检查用户权限和防火墙设置
-- **数据持久化**: 所有数据都保存在 `mysql-data` 卷中，重启不会丢失
+/**
+    多文件上传(字节流)
+*/
+SELECT 
+  http_post_multipart_multi (
+    'http://172.29.224.1:9000/file/uploadList2',-- url
+    'auto_token: Bearer your-token\nvi: vvvvvvvvvvvvvv',-- 请求头
+    '10000',-- 超时时间ms
+    'custID=custID;uuid=uuid',-- 字段
+    'file', -- 文件属性
+    '1.txt',-- 文件名称
+    CAST('1111' AS BINARY),-- 文件字节
+    'file',
+    '2.txt',
+    CAST('你好阿斯顿撒旦阿萨德阿斯顿撒的阿萨德 萨达 你好阿斯顿撒旦 ' AS BINARY)
+  ) ;

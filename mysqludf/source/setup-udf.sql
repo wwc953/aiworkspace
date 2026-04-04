@@ -97,4 +97,22 @@ DELIMITER ;
 
 -- 测试
 select CAST(http_get('http://www.baidu.com') AS CHAR CHARACTER SET utf8) as result;
+
+/**
+    多文件上传(字节流)
+*/
+SELECT 
+  http_post_multipart_multi (
+    'http://172.29.224.1:9000/file/uploadList2',-- url
+    'auto_token: Bearer your-token\nvi: vvvvvvvvvvvvvv',-- 请求头
+    '10000',-- 超时时间ms
+    'custID=custID;uuid=uuid',-- 字段
+    'file', -- 文件属性
+    '1.txt',-- 文件名称
+    CAST('1111' AS BINARY),-- 文件字节
+    'file',
+    '2.txt',
+    CAST('你好阿斯顿撒旦阿萨德阿斯顿撒的阿萨德 萨达 你好阿斯顿撒旦 ' AS BINARY)
+  ) ;
+
  
