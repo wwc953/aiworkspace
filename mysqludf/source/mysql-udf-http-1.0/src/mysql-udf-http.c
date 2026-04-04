@@ -1110,7 +1110,6 @@ char *http_post_multipart_multi(UDF_INIT *initid, UDF_ARGS *args,
         return NULL;
     }
 
-    fprintf(stderr, "11 has data->curl=%p, data=%p\n", data ? ((st_curl_results *)data)->curl : NULL, data);
     if (!curl)
     {
         *length = 0;
@@ -1123,8 +1122,7 @@ char *http_post_multipart_multi(UDF_INIT *initid, UDF_ARGS *args,
 
     if (data && curl)
     {
-         fprintf(stderr, "into curl..... curl=%p, url='%s', file_count=%d\n",
-                 curl, data->url, data->file_count);
+        fprintf(stderr, "curl=%p, url='%s', file_count=%d\n", curl, data->url, data->file_count);
 
         struct curl_slist *chunk = NULL;
         CURLFORMcode formcode;
@@ -1157,7 +1155,6 @@ char *http_post_multipart_multi(UDF_INIT *initid, UDF_ARGS *args,
         }
 
         // Set request options
-        fprintf(stderr, "Setting URL: '%s'\n", data->url);
         if (data->url[0] != '\0')
         {
             curl_easy_setopt(curl, CURLOPT_URL, data->url);
