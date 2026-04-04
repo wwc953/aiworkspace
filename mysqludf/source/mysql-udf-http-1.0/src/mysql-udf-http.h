@@ -22,3 +22,17 @@ typedef struct {
   unsigned char *data;                    // Raw binary data
   unsigned long length;                   // Data length in bytes
 } file_upload_field;
+
+typedef struct {
+  char url[1024];
+  file_upload_field files[MAX_FORM_FIELDS];
+  int file_count;
+  char *post_fields[MAX_FORM_FIELDS];
+  int post_field_count;
+  char *headers_str;
+  long timeout_ms;
+} http_multipart_data;
+
+// Function to parse comma-separated strings
+int parse_comma_separated(const char *input, char *output[], int max_items);
+int count_comma_items(const char *input);

@@ -1,5 +1,6 @@
 #include <mysql.h>
 #include <string.h>
+#include <ctype.h>
 
 #include <stdio.h>
 #include <stdlib.h> // avoid realloc and free warning
@@ -24,6 +25,14 @@ void http_put_deinit(UDF_INIT *initid);
 my_bool http_delete_init(UDF_INIT *initid, UDF_ARGS *args, char *message);
 char *http_delete(UDF_INIT *initid, UDF_ARGS *args, char *result, unsigned long *length, char *is_null, char *error);
 void http_delete_deinit(UDF_INIT *initid);
+
+my_bool http_post_file_init(UDF_INIT *initid, UDF_ARGS *args, char *message);
+char *http_post_file(UDF_INIT *initid, UDF_ARGS *args, char *result, unsigned long *length, char *is_null, char *error);
+void http_post_file_deinit(UDF_INIT *initid);
+
+my_bool http_post_files_init(UDF_INIT *initid, UDF_ARGS *args, char *message);
+char *http_post_files(UDF_INIT *initid, UDF_ARGS *args, char *result, unsigned long *length, char *is_null, char *error);
+void http_post_files_deinit(UDF_INIT *initid);
 
 static void *myrealloc(void *ptr, size_t size)
 {
@@ -61,6 +70,76 @@ static void cleanup_allocated_strings(char **headers_str, char **timeout_str)
         free(*timeout_str);
         *timeout_str = NULL;
     }
+}
+
+// Helper function to count items in comma-separated string
+int count_comma_items(const char *input)
+{
+    if (!input || !*input) return 0;
+
+    int count = 1; // At least one item
+    const char *p = input;
+
+    while (*p) {
+        if (*p == ',') {
+            count++;
+            // Skip consecutive commas
+            while (*p == ',') p++;
+        } else {
+            p++;
+        }
+    }
+
+    return count > MAX_FORM_FIELDS ? MAX_FORM_FIELDS : count;
+}
+
+// Helper function to parse comma-separated string into array
+int parse_comma_separated(const char *input, char *output[], int max_items)
+{
+    if (!input || !*input || max_items <= 0) return 0;
+
+    int item_count = 0;
+    const char *start = input;
+    const char *end;
+
+    while (item_count < max_items && *start) {
+        end = start;
+
+        // Find the end of current item
+        while (*end && *end != ',') end++;
+
+        // Calculate length and copy (trim whitespace)
+        size_t len = end - start;
+        if (len > 0) {
+            char *item = output[item_count];
+            size_t copy_len = len > 255 ? 255 : len; // Max 255 chars per item
+
+            // Trim leading whitespace
+            while (copy_len > 0 && isspace(start[copy_len - 1])) copy_len--;
+
+            strncpy(item, start, copy_len);
+            item[copy_len] = '\0';
+
+            // Trim trailing whitespace
+            char *trim_end = item + strlen(item) - 1;
+            while (trim_end >= item && isspace(*trim_end)) {
+                *trim_end-- = '\0';
+            }
+        } else {
+            output[item_count][0] = '\0'; // Empty item
+        }
+
+        item_count++;
+
+        // Move to next item
+        if (*end == ',') {
+            start = end + 1;
+        } else {
+            break;
+        }
+    }
+
+    return item_count;
 }
 static CURL *my_container_curl_init(st_curl_results *res)
 {
@@ -790,55 +869,30 @@ void http_post_headers_deinit(UDF_INIT *initid)
     return;
 }
 
-/* ------------------------ HTTP POST with File Upload ------------------------------ */
+/* ------------------------ HTTP POST File Upload with Headers and Timeout ------------------------------ */
 
 my_bool http_post_file_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
 {
-    st_curl_results *container;
+    http_multipart_data *container;
 
-    // Check minimum arguments: url + headers + at least one field (name, filename, content_type, data)
-    // Plus optional timeout parameter
-    int min_args = 6; // url + headers + field(name,filename,content_type,data)
-    if (args->arg_count >= 7 && (args->arg_count - 3) % 3 == 0) {
-        // Has timeout parameter
-        min_args = 7;
-    }
-
-    if (args->arg_count < min_args || (args->arg_count - (min_args==7 ? 3 : 2)) % 3 != 0 ||
-        args->arg_count > (min_args + MAX_FORM_FIELDS*3))
+    if (args->arg_count != 6)
     {
-        if (args->arg_count >= 7 && (args->arg_count - 3) % 3 == 0) {
-            strncpy(message,
-                    "arguments must be supplied: http_post_file('<url>','<headers>','<timeout_ms>','<field_name1>','<filename>1','<content_type1>','<data1>',...).",
-                    MYSQL_ERRMSG_SIZE);
-        } else {
-            strncpy(message,
-                    "arguments must be supplied: http_post_file('<url>','<headers>','<field_name1>','<filename>1','<content_type1>','<data1>',...).",
-                    MYSQL_ERRMSG_SIZE);
-        }
+        strncpy(message,
+                "six arguments must be supplied: http_post_file('<url>','<field_name>','<filename>','<content_type>','<headers>','<timeout_ms>').",
+                MYSQL_ERRMSG_SIZE);
         return 1;
     }
 
-    // First argument is URL (string)
+    // 所有参数均视为字符串类型
     args->arg_type[0] = STRING_RESULT;
-
-    // Second argument is headers (string)
     args->arg_type[1] = STRING_RESULT;
-
-    // Third argument is optional timeout (string)
-    if (args->arg_count >= 7) {
-        args->arg_type[2] = STRING_RESULT;
-    }
-
-    // Remaining arguments are field components (string)
-    // Format: name, filename, content_type, data (each as string)
-    int i;
-    for (i = (args->arg_count >= 7 ? 3 : 2); i < args->arg_count; i++) {
-        args->arg_type[i] = STRING_RESULT;
-    }
+    args->arg_type[2] = STRING_RESULT;
+    args->arg_type[3] = STRING_RESULT;
+    args->arg_type[4] = STRING_RESULT;
+    args->arg_type[5] = STRING_RESULT;
 
     initid->max_length = CURL_UDF_MAX_SIZE;
-    container = (st_curl_results *)malloc(sizeof(st_curl_results));
+    container = (http_multipart_data *)malloc(sizeof(http_multipart_data));
 
     if (!container)
     {
@@ -846,12 +900,46 @@ my_bool http_post_file_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
         return 1;
     }
 
-    if (!my_container_curl_init(container))
+    memset(container, 0, sizeof(http_multipart_data));
+    strncpy(container->url, args->args[0], sizeof(container->url) - 1);
+    container->url[sizeof(container->url) - 1] = '\0';
+
+    // 解析文件名和内容类型
+    if (args->args[2])
     {
-        free(container);
-        strncpy(message, "curl initialization failed", MYSQL_ERRMSG_SIZE);
-        return 1;
+        strncpy(container->files[0].filename, args->args[2], MAX_FILENAME_LENGTH - 1);
+        container->files[0].filename[MAX_FILENAME_LENGTH - 1] = '\0';
     }
+
+    if (args->args[3])
+    {
+        strncpy(container->files[0].content_type, args->args[3], sizeof(container->files[0].content_type) - 1);
+        container->files[0].content_type[sizeof(container->files[0].content_type) - 1] = '\0';
+    }
+    else
+    {
+        strcpy(container->files[0].content_type, "application/octet-stream");
+    }
+
+    // 解析请求头字符串
+    if (args->args[4])
+    {
+        container->headers_str = strndup(args->args[4], args->lengths[4]);
+    }
+
+    // 解析超时时间（毫秒）
+    long timeout_ms = REQ_TIMEOUT_MS;
+    if (args->args[5] && args->lengths[5] > 0)
+    {
+        char *endptr;
+        long val = strtol(args->args[5], &endptr, 10);
+        if (*args->args[5] != '\0' && *endptr == '\0' && val > 0)
+        {
+            timeout_ms = val;
+        }
+    }
+    container->timeout_ms = timeout_ms;
+
     initid->ptr = (char *)container;
 
     return 0;
@@ -863,25 +951,19 @@ char *http_post_file(UDF_INIT *initid, UDF_ARGS *args,
                      __attribute__((unused)) char *is_null,
                      __attribute__((unused)) char *error)
 {
-    char err_msg[CURL_ERROR_SIZE] = {0};
     CURLcode retref;
+    char err_msg[CURL_ERROR_SIZE] = {0};
     CURL *curl;
     st_curl_results *res = (st_curl_results *)initid->ptr;
+    http_multipart_data *data = (http_multipart_data *)initid->ptr;
+    FILE *file = NULL;
+    char *field_name = args->args[1];
+    char *filename = args->args[2];
     char *headers_str = NULL;
-    char *timeout_str = NULL;
-    struct curl_slist *chunk = NULL;
-    CURL *multi_handle = NULL;
-    int field_count = (args->arg_count - (args->arg_count >= 7 ? 3 : 2)) / 3;  // Each field has 3 components
-    long timeout_ms = REQ_TIMEOUT_MS;
 
-    // Determine offset based on whether timeout is present
-    int base_offset = (args->arg_count >= 7 ? 3 : 2);
-
-    if (!res || !initid->ptr || !args || args->arg_count < base_offset + 3 ||
-        (args->arg_count - base_offset) % 3 != 0)
+    if (!res || !initid->ptr || !data || !args || args->arg_count < 6)
     {
         *length = 0;
-        if (chunk) curl_slist_free_all(chunk);
         return NULL;
     }
 
@@ -891,92 +973,78 @@ char *http_post_file(UDF_INIT *initid, UDF_ARGS *args,
 
     if (curl)
     {
-        // Parse headers (second argument)
-        if (args->args[1] && args->lengths[1] > 0)
+        struct curl_slist *chunk = NULL;
+        CURLFORMcode formcode;
+
+        // 设置基本选项
+        chunk = curl_slist_append(chunk, "Expect:");
+
+        // 解析自定义请求头
+        if (data->headers_str)
         {
-            headers_str = strndup(args->args[1], args->lengths[1]);
-            if (headers_str)
+            char *line = strtok(data->headers_str, "\n");
+            while (line != NULL)
             {
-                char *line = strtok(headers_str, "\n");
-                while (line != NULL)
-                {
-                    // Remove leading/trailing whitespace
-                    while (*line == ' ' || *line == '\t')
-                        line++;
-                    char *end = line + strlen(line) - 1;
-                    while (end > line && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n'))
-                        *end-- = '\0';
+                // 去除行首尾空白
+                while (*line == ' ' || *line == '\t')
+                    line++;
+                char *end = line + strlen(line) - 1;
+                while (end > line && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n'))
+                    *end-- = '\0';
 
-                    if (strlen(line) > 0)
-                        chunk = curl_slist_append(chunk, line);
-                    line = strtok(NULL, "\n");
-                }
+                if (strlen(line) > 0)
+                    chunk = curl_slist_append(chunk, line);
+                line = strtok(NULL, "\n");
             }
         }
 
-        // Parse timeout if provided (third argument when present)
-        if (args->arg_count >= 7 && args->args[2] && args->lengths[2] > 0)
-        {
-            timeout_str = strndup(args->args[2], args->lengths[2]);
-            if (timeout_str)
-            {
-                char *endptr;
-                long val = strtol(timeout_str, &endptr, 10);
-                if (*timeout_str != '\0' && *endptr == '\0' && val > 0)
-                {
-                    timeout_ms = val;
-                }
-            }
-        }
-
-        // Parse form fields from arguments
-        // Format: URL, headers, [timeout,] name1, filename1, content_type1, name2, filename2, content_type2, ...
-        struct curl_httppost *formpost = NULL;
-        struct curl_httppost *lastptr = NULL;
-
-        int i;
-        for (i = 0; i < field_count; i++) {
-            int arg_offset = base_offset + i * 3;
-
-            if (arg_offset + 2 >= args->arg_count) break;
-
-            const char *field_name = args->args[arg_offset];
-            const char *filename = args->args[arg_offset + 1];
-            const char *content_type = args->args[arg_offset + 2];
-
-            if (!field_name || !filename || !content_type ||
-                strlen(field_name) == 0 || strlen(filename) == 0 || strlen(content_type) == 0) {
-                continue;
-            }
-
-            // Add form field for file upload
-            // Note: This is a simplified version. For full file upload support,
-            // you would need to read the actual file data from the provided data parameter
-            curl_formadd(&formpost, &lastptr,
-                         CURLFORM_COPYNAME, field_name,
-                         CURLFORM_FILE, filename,
-                         CURLFORM_CONTENTTYPE, content_type,
-                         CURLFORM_END);
-        }
-
-        // Configure the request
-        curl_easy_setopt(curl, CURLOPT_URL, args->args[0]);
+        curl_easy_setopt(curl, CURLOPT_URL, data->url);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, result_cb);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)res);
         curl_easy_setopt(curl, CURLOPT_USERAGENT, "mysql-udf-http/1.0");
         curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, err_msg);
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeout_ms);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, data->timeout_ms);
 
-        // Add custom headers if provided
-        if (chunk)
+        // 构建multipart表单
+        struct curl_httppost *formpost = NULL;
+        struct curl_httppost *lastptr = NULL;
+
+        // 添加文件字段
+        if (filename && strlen(filename) > 0)
         {
-            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, chunk);
+            file = fopen(filename, "rb");
+            if (file)
+            {
+                fseek(file, 0, SEEK_END);
+                long file_size = ftell(file);
+                fseek(file, 0, SEEK_SET);
+
+                formcode = curl_formadd(&formpost,
+                                        &lastptr,
+                                        CURLFORM_COPYNAME, field_name ? field_name : "file",
+                                        CURLFORM_FILE, filename,
+                                        CURLFORM_CONTENTTYPE, data->files[0].content_type,
+                                        CURLFORM_END);
+
+                if (formcode != CURL_FORMADD_OK)
+                {
+                    fprintf(stderr, "<%s:%d> ERROR. curl_formadd failed\n", __FUNCTION__, __LINE__);
+                    fclose(file);
+                    *length = 0;
+                    return NULL;
+                }
+            }
+            else
+            {
+                fprintf(stderr, "<%s:%d> ERROR. Cannot open file %s\n", __FUNCTION__, __LINE__, filename);
+                *length = 0;
+                return NULL;
+            }
         }
 
-        // Set multipart form data
         curl_easy_setopt(curl, CURLOPT_HTTPPOST, formpost);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, chunk);
 
-        // Perform the request
         retref = curl_easy_perform(curl);
         if (retref)
         {
@@ -984,14 +1052,13 @@ char *http_post_file(UDF_INIT *initid, UDF_ARGS *args,
             *length = 0;
         }
 
-        // Cleanup
+        // 清理资源
+        if (file)
+            fclose(file);
+
         curl_formfree(formpost);
         if (chunk)
             curl_slist_free_all(chunk);
-        if (headers_str)
-            free(headers_str);
-        if (timeout_str)
-            free(timeout_str);
     }
     else
     {
@@ -999,21 +1066,348 @@ char *http_post_file(UDF_INIT *initid, UDF_ARGS *args,
     }
 
     *length = res->size;
-    return res->result ? (char *)res->result : NULL;
+    return ((char *)res->result);
 }
 
 void http_post_file_deinit(UDF_INIT *initid)
 {
-    st_curl_results *res = (st_curl_results *)initid->ptr;
+    http_multipart_data *data = (http_multipart_data *)initid->ptr;
 
-    if (res)
+    if (data)
     {
-        free(res->result);
-        curl_easy_cleanup(res->curl);
-        free(res);
+        // 释放任何已分配的内存
+        int i;
+        for ( i = 0; i < data->file_count; i++)
+        {
+            if (data->files[i].data)
+            {
+                free(data->files[i].data);
+                data->files[i].data = NULL;
+            }
+        }
+     
+        for ( i = 0; i < data->post_field_count; i++)
+        {
+            if (data->post_fields[i])
+            {
+                free(data->post_fields[i]);
+                data->post_fields[i] = NULL;
+            }
+        }
+
+        if (data->headers_str)
+        {
+            free(data->headers_str);
+            data->headers_str = NULL;
+        }
+
+        free(data);
     }
     return;
 }
+
+/* ------------------------ HTTP POST Multiple Files with Headers and Timeout ------------------------------ */
+
+my_bool http_post_files_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
+{
+    http_multipart_data *container;
+    int field_count, file_count, type_count;
+
+    if (args->arg_count != 6)
+    {
+        strncpy(message,
+                "six arguments must be supplied: http_post_files('<url>','<field_names>','<filenames>','<content_types>','<headers>','<timeout_ms>').",
+                MYSQL_ERRMSG_SIZE);
+        return 1;
+    }
+
+    // 所有参数均视为字符串类型
+    args->arg_type[0] = STRING_RESULT;
+    args->arg_type[1] = STRING_RESULT;
+    args->arg_type[2] = STRING_RESULT;
+    args->arg_type[3] = STRING_RESULT;
+    args->arg_type[4] = STRING_RESULT;
+    args->arg_type[5] = STRING_RESULT;
+
+    initid->max_length = CURL_UDF_MAX_SIZE;
+    container = (http_multipart_data *)malloc(sizeof(http_multipart_data));
+
+    if (!container)
+    {
+        strncpy(message, "out of memory", MYSQL_ERRMSG_SIZE);
+        return 1;
+    }
+
+    memset(container, 0, sizeof(http_multipart_data));
+    strncpy(container->url, args->args[0], sizeof(container->url) - 1);
+    container->url[sizeof(container->url) - 1] = '\0';
+
+    // 解析field names (comma-separated)
+    if (args->args[1])
+    {
+        field_count = count_comma_items(args->args[1]);
+        if (field_count > MAX_FORM_FIELDS)
+        {
+            field_count = MAX_FORM_FIELDS;
+            strncpy(message, "too many field names (max 10)", MYSQL_ERRMSG_SIZE);
+            free(container);
+            return 1;
+        }
+
+        char temp_fields[MAX_FORM_FIELDS][256];
+        parse_comma_separated(args->args[1], (char **)temp_fields, MAX_FORM_FIELDS);
+
+        int i;
+        for ( i = 0; i < field_count && i < MAX_FORM_FIELDS; i++)
+        {
+            if (strlen(temp_fields[i]) == 0)
+                strcpy(container->files[i].name, "file");
+            else
+                strncpy(container->files[i].name, temp_fields[i], MAX_FILENAME_LENGTH - 1);
+            container->files[i].name[MAX_FILENAME_LENGTH - 1] = '\0';
+        }
+        container->file_count = field_count;
+    }
+
+    // 解析filenames (comma-separated)
+    if (args->args[2])
+    {
+        file_count = count_comma_items(args->args[2]);
+        if (file_count > MAX_FORM_FIELDS)
+        {
+            file_count = MAX_FORM_FIELDS;
+            strncpy(message, "too many files (max 10)", MYSQL_ERRMSG_SIZE);
+            free(container);
+            return 1;
+        }
+
+        char temp_files[MAX_FORM_FIELDS][MAX_FILENAME_LENGTH];
+        parse_comma_separated(args->args[2], (char **)temp_files, MAX_FORM_FIELDS);
+
+        int i;
+        for ( i = 0; i < file_count && i < MAX_FORM_FIELDS; i++)
+        {
+            strncpy(container->files[i].filename, temp_files[i], MAX_FILENAME_LENGTH - 1);
+            container->files[i].filename[MAX_FILENAME_LENGTH - 1] = '\0';
+        }
+        container->file_count = file_count;
+    }
+
+    // 解析content types (comma-separated)
+    if (args->args[3])
+    {
+        type_count = count_comma_items(args->args[3]);
+        if (type_count > MAX_FORM_FIELDS)
+        {
+            type_count = MAX_FORM_FIELDS;
+        }
+
+        char temp_types[MAX_FORM_FIELDS][128];
+        parse_comma_separated(args->args[3], (char **)temp_types, MAX_FORM_FIELDS);
+
+        int i;
+        for ( i = 0; i < type_count && i < MAX_FORM_FIELDS; i++)
+        {
+            if (strlen(temp_types[i]) == 0)
+                strcpy(container->files[i].content_type, "application/octet-stream");
+            else
+                strncpy(container->files[i].content_type, temp_types[i], sizeof(container->files[i].content_type) - 1);
+            container->files[i].content_type[sizeof(container->files[i].content_type) - 1] = '\0';
+        }
+    }
+
+    // 解析请求头字符串
+    if (args->args[4])
+    {
+        container->headers_str = strndup(args->args[4], args->lengths[4]);
+    }
+
+    // 解析超时时间（毫秒）
+    long timeout_ms = REQ_TIMEOUT_MS;
+    if (args->args[5] && args->lengths[5] > 0)
+    {
+        char *endptr;
+        long val = strtol(args->args[5], &endptr, 10);
+        if (*args->args[5] != '\0' && *endptr == '\0' && val > 0)
+        {
+            timeout_ms = val;
+        }
+    }
+    container->timeout_ms = timeout_ms;
+
+    initid->ptr = (char *)container;
+
+    return 0;
+}
+
+char *http_post_files(UDF_INIT *initid, UDF_ARGS *args,
+                      __attribute__((unused)) char *result,
+                      unsigned long *length,
+                      __attribute__((unused)) char *is_null,
+                      __attribute__((unused)) char *error)
+{
+    CURLcode retref;
+    char err_msg[CURL_ERROR_SIZE] = {0};
+    CURL *curl;
+    st_curl_results *res = (st_curl_results *)initid->ptr;
+    http_multipart_data *data = (http_multipart_data *)initid->ptr;
+    FILE *file = NULL;
+
+    if (!res || !initid->ptr || !data || !args || args->arg_count < 6)
+    {
+        *length = 0;
+        return NULL;
+    }
+
+    curl = res->curl;
+    res->result = NULL;
+    res->size = 0;
+
+    if (curl)
+    {
+        struct curl_slist *chunk = NULL;
+        CURLFORMcode formcode;
+
+        // 设置基本选项
+        chunk = curl_slist_append(chunk, "Expect:");
+
+        // 解析自定义请求头
+        if (data->headers_str)
+        {
+            char *line = strtok(data->headers_str, "\n");
+            while (line != NULL)
+            {
+                // 去除行首尾空白
+                while (*line == ' ' || *line == '\t')
+                    line++;
+                char *end = line + strlen(line) - 1;
+                while (end > line && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n'))
+                    *end-- = '\0';
+
+                if (strlen(line) > 0)
+                    chunk = curl_slist_append(chunk, line);
+                line = strtok(NULL, "\n");
+            }
+        }
+
+        curl_easy_setopt(curl, CURLOPT_URL, data->url);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, result_cb);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)res);
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, "mysql-udf-http/1.0");
+        curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, err_msg);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, data->timeout_ms);
+
+        // 构建multipart表单
+        struct curl_httppost *formpost = NULL;
+        struct curl_httppost *lastptr = NULL;
+
+        // 添加所有文件字段
+        int i;
+        for (i = 0; i < data->file_count && i < MAX_FORM_FIELDS; i++)
+        {
+            if (strlen(data->files[i].filename) > 0)
+            {
+                file = fopen(data->files[i].filename, "rb");
+                if (file)
+                {
+                    fseek(file, 0, SEEK_END);
+                    long file_size = ftell(file);
+                    fseek(file, 0, SEEK_SET);
+
+                    formcode = curl_formadd(&formpost,
+                                            &lastptr,
+                                            CURLFORM_COPYNAME, data->files[i].name,
+                                            CURLFORM_FILE, data->files[i].filename,
+                                            CURLFORM_CONTENTTYPE, data->files[i].content_type,
+                                            CURLFORM_END);
+
+                    if (formcode != CURL_FORMADD_OK)
+                    {
+                        fprintf(stderr, "<%s:%d> ERROR. curl_formadd failed for file %s\n", __FUNCTION__, __LINE__, data->files[i].filename);
+                        fclose(file);
+                        *length = 0;
+                        return NULL;
+                    }
+                }
+                else
+                {
+                    fprintf(stderr, "<%s:%d> ERROR. Cannot open file %s\n", __FUNCTION__, __LINE__, data->files[i].filename);
+                    *length = 0;
+                    return NULL;
+                }
+            }
+        }
+
+        curl_easy_setopt(curl, CURLOPT_HTTPPOST, formpost);
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, chunk);
+
+        retref = curl_easy_perform(curl);
+        if (retref)
+        {
+            fprintf(stderr, "<%s:%d> ERROR. curl_easy_perform = %d(%s)\n", __FUNCTION__, __LINE__, retref, err_msg);
+            *length = 0;
+        }
+
+        // 清理资源 
+        for (  i = 0; i < data->file_count && i < MAX_FORM_FIELDS; i++)
+        {
+            if (strlen(data->files[i].filename) > 0)
+            {
+                file = fopen(data->files[i].filename, "rb");
+                if (file) fclose(file);
+            }
+        }
+
+        curl_formfree(formpost);
+        if (chunk)
+            curl_slist_free_all(chunk);
+    }
+    else
+    {
+        *length = 0;
+    }
+
+    *length = res->size;
+    return ((char *)res->result);
+}
+
+void http_post_files_deinit(UDF_INIT *initid)
+{
+    http_multipart_data *data = (http_multipart_data *)initid->ptr;
+
+    if (data)
+    {
+        // 释放任何已分配的内存
+        int i;
+        for ( i = 0; i < data->file_count; i++)
+        {
+            if (data->files[i].data)
+            {
+                free(data->files[i].data);
+                data->files[i].data = NULL;
+            }
+        } 
+        for (  i = 0; i < data->post_field_count; i++)
+        {
+            if (data->post_fields[i])
+            {
+                free(data->post_fields[i]);
+                data->post_fields[i] = NULL;
+            }
+        }
+
+        if (data->headers_str)
+        {
+            free(data->headers_str);
+            data->headers_str = NULL;
+        }
+
+        free(data);
+    }
+    return;
+}
+
+
 
 /* Module unload function to cleanup global resources */
 void mysql_udf_http_deinit(void)
