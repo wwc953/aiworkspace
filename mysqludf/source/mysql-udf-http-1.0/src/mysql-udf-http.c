@@ -1204,7 +1204,8 @@ void http_post_multipart_multi_deinit(UDF_INIT *initid)
     {
         // Free multi-file arrays
         if (data->field_names) {
-            for (int i = 0; i < data->max_files; i++) {
+            int i;
+            for (i = 0; i < data->max_files; i++) {
                 if (data->field_names[i]) {
                     free(data->field_names[i]);
                     data->field_names[i] = NULL;
@@ -1215,7 +1216,8 @@ void http_post_multipart_multi_deinit(UDF_INIT *initid)
         }
 
         if (data->filenames) {
-            for (int i = 0; i < data->max_files; i++) {
+            int i;
+            for (i = 0; i < data->max_files; i++) {
                 if (data->filenames[i]) {
                     free(data->filenames[i]);
                     data->filenames[i] = NULL;
@@ -1226,7 +1228,8 @@ void http_post_multipart_multi_deinit(UDF_INIT *initid)
         }
 
         if (data->file_datas) {
-            for (int i = 0; i < data->max_files; i++) {
+            int i;
+            for (i = 0; i < data->max_files; i++) {
                 if (data->file_datas[i]) {
                     free(data->file_datas[i]);
                     data->file_datas[i] = NULL;
