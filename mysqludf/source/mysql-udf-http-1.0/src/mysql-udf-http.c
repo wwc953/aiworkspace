@@ -26,14 +26,6 @@ my_bool http_delete_init(UDF_INIT *initid, UDF_ARGS *args, char *message);
 char *http_delete(UDF_INIT *initid, UDF_ARGS *args, char *result, unsigned long *length, char *is_null, char *error);
 void http_delete_deinit(UDF_INIT *initid);
 
-my_bool http_post_file_init(UDF_INIT *initid, UDF_ARGS *args, char *message);
-char *http_post_file(UDF_INIT *initid, UDF_ARGS *args, char *result, unsigned long *length, char *is_null, char *error);
-void http_post_file_deinit(UDF_INIT *initid);
-
-my_bool http_post_files_init(UDF_INIT *initid, UDF_ARGS *args, char *message);
-char *http_post_files(UDF_INIT *initid, UDF_ARGS *args, char *result, unsigned long *length, char *is_null, char *error);
-void http_post_files_deinit(UDF_INIT *initid);
-
 static void *myrealloc(void *ptr, size_t size)
 {
     /* There might be a realloc() out there that doesn't like reallocing
@@ -869,27 +861,47 @@ void http_post_headers_deinit(UDF_INIT *initid)
     return;
 }
 
-/* ------------------------ HTTP POST File Upload with Headers and Timeout ------------------------------ */
+/* Module unload function to cleanup global resources */
+void mysql_udf_http_deinit(void)
+{
+    if (curl_initialized)
+    {
+        curl_global_cleanup();
+        curl_initialized = 0;
+    }
+}
 
-my_bool http_post_file_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
+/* ------------------------ HTTP Multipart Form Data POST with Multiple Files ------------------------------ */
+
+my_bool http_post_multipart_multi_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
 {
     http_multipart_data *container;
+    int file_count;
 
-    if (args->arg_count != 6)
+    if (args->arg_count < 7 || (args->arg_count - 4) % 3 != 0)
     {
         strncpy(message,
-                "six arguments must be supplied: http_post_file('<url>','<field_name>','<filename>','<content_type>','<headers>','<timeout_ms>').",
+                "invalid argument count for multi-file upload. Use: http_post_multipart_multi('<url>','<headers>','<timeout_ms>','<fieldtxt>', '<uploaded_file1>','<filename>1','<file_data1>', '<uploaded_file2>','<filename>2','<file_data2>', ...)",
                 MYSQL_ERRMSG_SIZE);
         return 1;
     }
 
-    // 所有参数均视为字符串类型
-    args->arg_type[0] = STRING_RESULT;
-    args->arg_type[1] = STRING_RESULT;
-    args->arg_type[2] = STRING_RESULT;
-    args->arg_type[3] = STRING_RESULT;
-    args->arg_type[4] = STRING_RESULT;
-    args->arg_type[5] = STRING_RESULT;
+    // Calculate number of file groups (every 3 args after the first 4)
+    int base_args = 4; // url, headers, timeout_ms, fieldtxt
+    file_count = (args->arg_count - base_args) / 3;
+
+    // Limit to max form fields
+    if (file_count > MAX_FORM_FIELDS)
+    {
+        file_count = MAX_FORM_FIELDS;
+        strncpy(message, "too many files (max 10)", MYSQL_ERRMSG_SIZE);
+        return 1;
+    }
+
+    // All arguments are treated as string type
+    for (int i = 0; i < args->arg_count; i++) {
+        args->arg_type[i] = STRING_RESULT;
+    }
 
     initid->max_length = CURL_UDF_MAX_SIZE;
     container = (http_multipart_data *)malloc(sizeof(http_multipart_data));
@@ -901,67 +913,137 @@ my_bool http_post_file_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
     }
 
     memset(container, 0, sizeof(http_multipart_data));
+
+    // Store URL
     strncpy(container->url, args->args[0], sizeof(container->url) - 1);
     container->url[sizeof(container->url) - 1] = '\0';
 
-    // 解析文件名和内容类型
-    if (args->args[2])
+    // Parse headers
+    if (args->args[1])
     {
-        strncpy(container->files[0].filename, args->args[2], MAX_FILENAME_LENGTH - 1);
-        container->files[0].filename[MAX_FILENAME_LENGTH - 1] = '\0';
+        container->headers_str = strndup(args->args[1], args->lengths[1]);
     }
 
-    if (args->args[3])
-    {
-        strncpy(container->files[0].content_type, args->args[3], sizeof(container->files[0].content_type) - 1);
-        container->files[0].content_type[sizeof(container->files[0].content_type) - 1] = '\0';
-    }
-    else
-    {
-        strcpy(container->files[0].content_type, "application/octet-stream");
-    }
-
-    // 解析请求头字符串
-    if (args->args[4])
-    {
-        container->headers_str = strndup(args->args[4], args->lengths[4]);
-    }
-
-    // 解析超时时间（毫秒）
+    // Parse timeout (default to REQ_TIMEOUT_MS)
     long timeout_ms = REQ_TIMEOUT_MS;
-    if (args->args[5] && args->lengths[5] > 0)
+    if (args->args[2] && args->lengths[2] > 0)
     {
         char *endptr;
-        long val = strtol(args->args[5], &endptr, 10);
-        if (*args->args[5] != '\0' && *endptr == '\0' && val > 0)
+        long val = strtol(args->args[2], &endptr, 10);
+        if (*args->args[2] != '\0' && *endptr == '\0' && val > 0)
         {
             timeout_ms = val;
         }
     }
     container->timeout_ms = timeout_ms;
 
-    initid->ptr = (char *)container;
+    // Parse text fields (format: name=value;name2=value2)
+    if (args->args[3] && strlen(args->args[3]) > 0)
+    {
+        char *fieldtxt = strdup(args->args[3]);
+        char *saveptr = NULL;
+        char *pair = strtok_r(fieldtxt, ";", &saveptr);
 
+        while (pair && container->post_field_count < MAX_FORM_FIELDS)
+        {
+            char *eq_pos = strchr(pair, '=');
+            if (eq_pos)
+            {
+                *eq_pos = '\0';
+                container->post_fields[container->post_field_count] = strdup(eq_pos + 1);
+                container->post_field_count++;
+            }
+            pair = strtok_r(NULL, ";", &saveptr);
+        }
+        free(fieldtxt);
+    }
+
+    // Initialize multi-file arrays
+    container->field_names = malloc(MAX_FORM_FIELDS * sizeof(char *));
+    container->filenames = malloc(MAX_FORM_FIELDS * sizeof(char *));
+    container->file_datas = malloc(MAX_FORM_FIELDS * sizeof(unsigned char *));
+    container->data_lengths = malloc(MAX_FORM_FIELDS * sizeof(unsigned long));
+    container->max_files = MAX_FORM_FIELDS;
+
+    for (int i = 0; i < MAX_FORM_FIELDS; i++) {
+        container->field_names[i] = NULL;
+        container->filenames[i] = NULL;
+        container->file_datas[i] = NULL;
+        container->data_lengths[i] = 0;
+    }
+
+    // Process each file group (uploaded_file, filename, file_data)
+    for (int file_idx = 0; file_idx < file_count; file_idx++)
+    {
+        int arg_offset = 4 + (file_idx * 3); // Base offset + file_idx * 3
+
+        // Extract field name
+        const char *field_name = args->arg_count > arg_offset ? args->args[arg_offset] : "";
+
+        // Extract filename
+        const char *filename = args->arg_count > arg_offset + 1 ? args->args[arg_offset + 1] : "";
+
+        // Extract file data
+        const char *file_data = args->arg_count > arg_offset + 2 ? args->args[arg_offset + 2] : "";
+
+        // Set field name
+        if (strlen(field_name) == 0)
+            strcpy(container->files[file_idx].name, "file");
+        else
+            strncpy(container->files[file_idx].name, field_name, MAX_FILENAME_LENGTH - 1);
+        container->files[file_idx].name[MAX_FILENAME_LENGTH - 1] = '\0';
+
+        // Set filename
+        strncpy(container->files[file_idx].filename, filename, MAX_FILENAME_LENGTH - 1);
+        container->files[file_idx].filename[MAX_FILENAME_LENGTH - 1] = '\0';
+
+        // Store field name pointer
+        if (field_name && strlen(field_name) > 0) {
+            container->field_names[file_idx] = strdup(field_name);
+        }
+
+        // Store filename pointer
+        if (filename && strlen(filename) > 0) {
+            container->filenames[file_idx] = strdup(filename);
+        }
+
+        // Store file data
+        if (file_data && args->lengths[arg_offset + 2] > 0) {
+            container->file_datas[file_idx] = (unsigned char *)malloc(args->lengths[arg_offset + 2]);
+            if (container->file_datas[file_idx]) {
+                memcpy(container->file_datas[file_idx], file_data, args->lengths[arg_offset + 2]);
+                container->data_lengths[file_idx] = args->lengths[arg_offset + 2];
+            }
+        }
+
+        // Also copy to the files array for compatibility
+        if (container->file_datas[file_idx]) {
+            container->files[file_idx].data = container->file_datas[file_idx];
+            container->files[file_idx].length = container->data_lengths[file_idx];
+        }
+    }
+
+    container->file_count = file_count;
+
+    return 0;
+
+    initid->ptr = (char *)container;
     return 0;
 }
 
-char *http_post_file(UDF_INIT *initid, UDF_ARGS *args,
-                     __attribute__((unused)) char *result,
-                     unsigned long *length,
-                     __attribute__((unused)) char *is_null,
-                     __attribute__((unused)) char *error)
+char *http_post_multipart_multi(UDF_INIT *initid, UDF_ARGS *args,
+                                __attribute__((unused)) char *result,
+                                unsigned long *length,
+                                __attribute__((unused)) char *is_null,
+                                __attribute__((unused)) char *error)
 {
     CURLcode retref;
     char err_msg[CURL_ERROR_SIZE] = {0};
     CURL *curl;
     st_curl_results *res = (st_curl_results *)initid->ptr;
     http_multipart_data *data = (http_multipart_data *)initid->ptr;
-    FILE *file = NULL;
-    char *field_name = args->args[1];
-    char *filename = args->args[2];
-    char *headers_str = NULL;
 
-    if (!res || !initid->ptr || !data || !args || args->arg_count < 6)
+    if (!res || !initid->ptr || !data || !args || args->arg_count < 7)
     {
         *length = 0;
         return NULL;
@@ -976,16 +1058,16 @@ char *http_post_file(UDF_INIT *initid, UDF_ARGS *args,
         struct curl_slist *chunk = NULL;
         CURLFORMcode formcode;
 
-        // 设置基本选项
+        // Set basic options
         chunk = curl_slist_append(chunk, "Expect:");
 
-        // 解析自定义请求头
+        // Add custom headers
         if (data->headers_str)
         {
             char *line = strtok(data->headers_str, "\n");
             while (line != NULL)
             {
-                // 去除行首尾空白
+                // Trim whitespace
                 while (*line == ' ' || *line == '\t')
                     line++;
                 char *end = line + strlen(line) - 1;
@@ -998,6 +1080,7 @@ char *http_post_file(UDF_INIT *initid, UDF_ARGS *args,
             }
         }
 
+        // Set request options
         curl_easy_setopt(curl, CURLOPT_URL, data->url);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, result_cb);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)res);
@@ -1005,38 +1088,83 @@ char *http_post_file(UDF_INIT *initid, UDF_ARGS *args,
         curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, err_msg);
         curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, data->timeout_ms);
 
-        // 构建multipart表单
+        // Build multipart form
         struct curl_httppost *formpost = NULL;
         struct curl_httppost *lastptr = NULL;
 
-        // 添加文件字段
-        if (filename && strlen(filename) > 0)
+        // Add text fields first
+        int i;
+        for (i = 0; i < data->post_field_count && i < MAX_FORM_FIELDS; i++)
         {
-            file = fopen(filename, "rb");
-            if (file)
+            if (data->post_fields[i])
             {
-                fseek(file, 0, SEEK_END);
-                long file_size = ftell(file);
-                fseek(file, 0, SEEK_SET);
-
                 formcode = curl_formadd(&formpost,
                                         &lastptr,
-                                        CURLFORM_COPYNAME, field_name ? field_name : "file",
-                                        CURLFORM_FILE, filename,
-                                        CURLFORM_CONTENTTYPE, data->files[0].content_type,
+                                        CURLFORM_COPYNAME, data->post_fields[i],
+                                        CURLFORM_PTRCONTENTS, data->post_fields[i],
+                                        CURLFORM_CONTENTSLENGTH, strlen(data->post_fields[i]),
                                         CURLFORM_END);
 
                 if (formcode != CURL_FORMADD_OK)
                 {
-                    fprintf(stderr, "<%s:%d> ERROR. curl_formadd failed\n", __FUNCTION__, __LINE__);
-                    fclose(file);
+                    fprintf(stderr, "<%s:%d> ERROR. curl_formadd failed for text field %d\n", __FUNCTION__, __LINE__, i);
                     *length = 0;
                     return NULL;
                 }
             }
-            else
+        }
+
+        // Add all file fields
+        for (i = 0; i < data->file_count && i < MAX_FORM_FIELDS; i++)
+        {
+            if (data->file_datas[i] && data->data_lengths[i] > 0)
             {
-                fprintf(stderr, "<%s:%d> ERROR. Cannot open file %s\n", __FUNCTION__, __LINE__, filename);
+                // Use in-memory binary data
+                formcode = curl_formadd(&formpost,
+                                        &lastptr,
+                                        CURLFORM_COPYNAME, data->files[i].name,
+                                        CURLFORM_BUFFER, data->filenames[i] ? data->filenames[i] : "uploaded_file",
+                                        CURLFORM_BUFFERPTR, data->file_datas[i],
+                                        CURLFORM_BUFFERLENGTH, data->data_lengths[i],
+                                        CURLFORM_CONTENTTYPE, "application/octet-stream",
+                                        CURLFORM_END);
+            }
+            else if (strlen(data->files[i].filename) > 0)
+            {
+                // Use file from disk
+                FILE *file = fopen(data->files[i].filename, "rb");
+                if (file)
+                {
+                    fseek(file, 0, SEEK_END);
+                    long file_size = ftell(file);
+                    fseek(file, 0, SEEK_SET);
+
+                    formcode = curl_formadd(&formpost,
+                                            &lastptr,
+                                            CURLFORM_COPYNAME, data->files[i].name,
+                                            CURLFORM_FILE, data->files[i].filename,
+                                            CURLFORM_CONTENTTYPE, "application/octet-stream",
+                                            CURLFORM_END);
+
+                    fclose(file);
+                }
+                else
+                {
+                    // Fallback to buffer with placeholder data
+                    formcode = curl_formadd(&formpost,
+                                            &lastptr,
+                                            CURLFORM_COPYNAME, data->files[i].name,
+                                            CURLFORM_BUFFER, data->files[i].filename[0] ? data->files[i].filename : "uploaded_file",
+                                            CURLFORM_BUFFERPTR, "",
+                                            CURLFORM_BUFFERLENGTH, 0,
+                                            CURLFORM_CONTENTTYPE, "application/octet-stream",
+                                            CURLFORM_END);
+                }
+            }
+
+            if (formcode != CURL_FORMADD_OK)
+            {
+                fprintf(stderr, "<%s:%d> ERROR. curl_formadd failed for file %d\n", __FUNCTION__, __LINE__, i);
                 *length = 0;
                 return NULL;
             }
@@ -1052,10 +1180,7 @@ char *http_post_file(UDF_INIT *initid, UDF_ARGS *args,
             *length = 0;
         }
 
-        // 清理资源
-        if (file)
-            fclose(file);
-
+        // Clean up resources
         curl_formfree(formpost);
         if (chunk)
             curl_slist_free_all(chunk);
@@ -1069,24 +1194,63 @@ char *http_post_file(UDF_INIT *initid, UDF_ARGS *args,
     return ((char *)res->result);
 }
 
-void http_post_file_deinit(UDF_INIT *initid)
+void http_post_multipart_multi_deinit(UDF_INIT *initid)
 {
     http_multipart_data *data = (http_multipart_data *)initid->ptr;
 
     if (data)
     {
-        // 释放任何已分配的内存
+        // Free multi-file arrays
+        if (data->field_names) {
+            for (int i = 0; i < data->max_files; i++) {
+                if (data->field_names[i]) {
+                    free(data->field_names[i]);
+                    data->field_names[i] = NULL;
+                }
+            }
+            free(data->field_names);
+            data->field_names = NULL;
+        }
+
+        if (data->filenames) {
+            for (int i = 0; i < data->max_files; i++) {
+                if (data->filenames[i]) {
+                    free(data->filenames[i]);
+                    data->filenames[i] = NULL;
+                }
+            }
+            free(data->filenames);
+            data->filenames = NULL;
+        }
+
+        if (data->file_datas) {
+            for (int i = 0; i < data->max_files; i++) {
+                if (data->file_datas[i]) {
+                    free(data->file_datas[i]);
+                    data->file_datas[i] = NULL;
+                }
+            }
+            free(data->file_datas);
+            data->file_datas = NULL;
+        }
+
+        if (data->data_lengths) {
+            free(data->data_lengths);
+            data->data_lengths = NULL;
+        }
+
+        // Free file upload field data
         int i;
-        for ( i = 0; i < data->file_count; i++)
+        for (i = 0; i < data->file_count; i++)
         {
-            if (data->files[i].data)
+            if (data->files[i].data && data->files[i].data != data->file_datas[i])
             {
+                // Only free if it's not already freed by the above loop
                 free(data->files[i].data);
                 data->files[i].data = NULL;
             }
         }
-     
-        for ( i = 0; i < data->post_field_count; i++)
+        for (i = 0; i < data->post_field_count; i++)
         {
             if (data->post_fields[i])
             {
@@ -1104,317 +1268,4 @@ void http_post_file_deinit(UDF_INIT *initid)
         free(data);
     }
     return;
-}
-
-/* ------------------------ HTTP POST Multiple Files with Headers and Timeout ------------------------------ */
-
-my_bool http_post_files_init(UDF_INIT *initid, UDF_ARGS *args, char *message)
-{
-    http_multipart_data *container;
-    int field_count, file_count, type_count;
-
-    if (args->arg_count != 6)
-    {
-        strncpy(message,
-                "six arguments must be supplied: http_post_files('<url>','<field_names>','<filenames>','<content_types>','<headers>','<timeout_ms>').",
-                MYSQL_ERRMSG_SIZE);
-        return 1;
-    }
-
-    // 所有参数均视为字符串类型
-    args->arg_type[0] = STRING_RESULT;
-    args->arg_type[1] = STRING_RESULT;
-    args->arg_type[2] = STRING_RESULT;
-    args->arg_type[3] = STRING_RESULT;
-    args->arg_type[4] = STRING_RESULT;
-    args->arg_type[5] = STRING_RESULT;
-
-    initid->max_length = CURL_UDF_MAX_SIZE;
-    container = (http_multipart_data *)malloc(sizeof(http_multipart_data));
-
-    if (!container)
-    {
-        strncpy(message, "out of memory", MYSQL_ERRMSG_SIZE);
-        return 1;
-    }
-
-    memset(container, 0, sizeof(http_multipart_data));
-    strncpy(container->url, args->args[0], sizeof(container->url) - 1);
-    container->url[sizeof(container->url) - 1] = '\0';
-
-    // 解析field names (comma-separated)
-    if (args->args[1])
-    {
-        field_count = count_comma_items(args->args[1]);
-        if (field_count > MAX_FORM_FIELDS)
-        {
-            field_count = MAX_FORM_FIELDS;
-            strncpy(message, "too many field names (max 10)", MYSQL_ERRMSG_SIZE);
-            free(container);
-            return 1;
-        }
-
-        char temp_fields[MAX_FORM_FIELDS][256];
-        parse_comma_separated(args->args[1], (char **)temp_fields, MAX_FORM_FIELDS);
-
-        int i;
-        for ( i = 0; i < field_count && i < MAX_FORM_FIELDS; i++)
-        {
-            if (strlen(temp_fields[i]) == 0)
-                strcpy(container->files[i].name, "file");
-            else
-                strncpy(container->files[i].name, temp_fields[i], MAX_FILENAME_LENGTH - 1);
-            container->files[i].name[MAX_FILENAME_LENGTH - 1] = '\0';
-        }
-        container->file_count = field_count;
-    }
-
-    // 解析filenames (comma-separated)
-    if (args->args[2])
-    {
-        file_count = count_comma_items(args->args[2]);
-        if (file_count > MAX_FORM_FIELDS)
-        {
-            file_count = MAX_FORM_FIELDS;
-            strncpy(message, "too many files (max 10)", MYSQL_ERRMSG_SIZE);
-            free(container);
-            return 1;
-        }
-
-        char temp_files[MAX_FORM_FIELDS][MAX_FILENAME_LENGTH];
-        parse_comma_separated(args->args[2], (char **)temp_files, MAX_FORM_FIELDS);
-
-        int i;
-        for ( i = 0; i < file_count && i < MAX_FORM_FIELDS; i++)
-        {
-            strncpy(container->files[i].filename, temp_files[i], MAX_FILENAME_LENGTH - 1);
-            container->files[i].filename[MAX_FILENAME_LENGTH - 1] = '\0';
-        }
-        container->file_count = file_count;
-    }
-
-    // 解析content types (comma-separated)
-    if (args->args[3])
-    {
-        type_count = count_comma_items(args->args[3]);
-        if (type_count > MAX_FORM_FIELDS)
-        {
-            type_count = MAX_FORM_FIELDS;
-        }
-
-        char temp_types[MAX_FORM_FIELDS][128];
-        parse_comma_separated(args->args[3], (char **)temp_types, MAX_FORM_FIELDS);
-
-        int i;
-        for ( i = 0; i < type_count && i < MAX_FORM_FIELDS; i++)
-        {
-            if (strlen(temp_types[i]) == 0)
-                strcpy(container->files[i].content_type, "application/octet-stream");
-            else
-                strncpy(container->files[i].content_type, temp_types[i], sizeof(container->files[i].content_type) - 1);
-            container->files[i].content_type[sizeof(container->files[i].content_type) - 1] = '\0';
-        }
-    }
-
-    // 解析请求头字符串
-    if (args->args[4])
-    {
-        container->headers_str = strndup(args->args[4], args->lengths[4]);
-    }
-
-    // 解析超时时间（毫秒）
-    long timeout_ms = REQ_TIMEOUT_MS;
-    if (args->args[5] && args->lengths[5] > 0)
-    {
-        char *endptr;
-        long val = strtol(args->args[5], &endptr, 10);
-        if (*args->args[5] != '\0' && *endptr == '\0' && val > 0)
-        {
-            timeout_ms = val;
-        }
-    }
-    container->timeout_ms = timeout_ms;
-
-    initid->ptr = (char *)container;
-
-    return 0;
-}
-
-char *http_post_files(UDF_INIT *initid, UDF_ARGS *args,
-                      __attribute__((unused)) char *result,
-                      unsigned long *length,
-                      __attribute__((unused)) char *is_null,
-                      __attribute__((unused)) char *error)
-{
-    CURLcode retref;
-    char err_msg[CURL_ERROR_SIZE] = {0};
-    CURL *curl;
-    st_curl_results *res = (st_curl_results *)initid->ptr;
-    http_multipart_data *data = (http_multipart_data *)initid->ptr;
-    FILE *file = NULL;
-
-    if (!res || !initid->ptr || !data || !args || args->arg_count < 6)
-    {
-        *length = 0;
-        return NULL;
-    }
-
-    curl = res->curl;
-    res->result = NULL;
-    res->size = 0;
-
-    if (curl)
-    {
-        struct curl_slist *chunk = NULL;
-        CURLFORMcode formcode;
-
-        // 设置基本选项
-        chunk = curl_slist_append(chunk, "Expect:");
-
-        // 解析自定义请求头
-        if (data->headers_str)
-        {
-            char *line = strtok(data->headers_str, "\n");
-            while (line != NULL)
-            {
-                // 去除行首尾空白
-                while (*line == ' ' || *line == '\t')
-                    line++;
-                char *end = line + strlen(line) - 1;
-                while (end > line && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n'))
-                    *end-- = '\0';
-
-                if (strlen(line) > 0)
-                    chunk = curl_slist_append(chunk, line);
-                line = strtok(NULL, "\n");
-            }
-        }
-
-        curl_easy_setopt(curl, CURLOPT_URL, data->url);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, result_cb);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *)res);
-        curl_easy_setopt(curl, CURLOPT_USERAGENT, "mysql-udf-http/1.0");
-        curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, err_msg);
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, data->timeout_ms);
-
-        // 构建multipart表单
-        struct curl_httppost *formpost = NULL;
-        struct curl_httppost *lastptr = NULL;
-
-        // 添加所有文件字段
-        int i;
-        for (i = 0; i < data->file_count && i < MAX_FORM_FIELDS; i++)
-        {
-            if (strlen(data->files[i].filename) > 0)
-            {
-                file = fopen(data->files[i].filename, "rb");
-                if (file)
-                {
-                    fseek(file, 0, SEEK_END);
-                    long file_size = ftell(file);
-                    fseek(file, 0, SEEK_SET);
-
-                    formcode = curl_formadd(&formpost,
-                                            &lastptr,
-                                            CURLFORM_COPYNAME, data->files[i].name,
-                                            CURLFORM_FILE, data->files[i].filename,
-                                            CURLFORM_CONTENTTYPE, data->files[i].content_type,
-                                            CURLFORM_END);
-
-                    if (formcode != CURL_FORMADD_OK)
-                    {
-                        fprintf(stderr, "<%s:%d> ERROR. curl_formadd failed for file %s\n", __FUNCTION__, __LINE__, data->files[i].filename);
-                        fclose(file);
-                        *length = 0;
-                        return NULL;
-                    }
-                }
-                else
-                {
-                    fprintf(stderr, "<%s:%d> ERROR. Cannot open file %s\n", __FUNCTION__, __LINE__, data->files[i].filename);
-                    *length = 0;
-                    return NULL;
-                }
-            }
-        }
-
-        curl_easy_setopt(curl, CURLOPT_HTTPPOST, formpost);
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, chunk);
-
-        retref = curl_easy_perform(curl);
-        if (retref)
-        {
-            fprintf(stderr, "<%s:%d> ERROR. curl_easy_perform = %d(%s)\n", __FUNCTION__, __LINE__, retref, err_msg);
-            *length = 0;
-        }
-
-        // 清理资源 
-        for (  i = 0; i < data->file_count && i < MAX_FORM_FIELDS; i++)
-        {
-            if (strlen(data->files[i].filename) > 0)
-            {
-                file = fopen(data->files[i].filename, "rb");
-                if (file) fclose(file);
-            }
-        }
-
-        curl_formfree(formpost);
-        if (chunk)
-            curl_slist_free_all(chunk);
-    }
-    else
-    {
-        *length = 0;
-    }
-
-    *length = res->size;
-    return ((char *)res->result);
-}
-
-void http_post_files_deinit(UDF_INIT *initid)
-{
-    http_multipart_data *data = (http_multipart_data *)initid->ptr;
-
-    if (data)
-    {
-        // 释放任何已分配的内存
-        int i;
-        for ( i = 0; i < data->file_count; i++)
-        {
-            if (data->files[i].data)
-            {
-                free(data->files[i].data);
-                data->files[i].data = NULL;
-            }
-        } 
-        for (  i = 0; i < data->post_field_count; i++)
-        {
-            if (data->post_fields[i])
-            {
-                free(data->post_fields[i]);
-                data->post_fields[i] = NULL;
-            }
-        }
-
-        if (data->headers_str)
-        {
-            free(data->headers_str);
-            data->headers_str = NULL;
-        }
-
-        free(data);
-    }
-    return;
-}
-
-
-
-/* Module unload function to cleanup global resources */
-void mysql_udf_http_deinit(void)
-{
-    if (curl_initialized)
-    {
-        curl_global_cleanup();
-        curl_initialized = 0;
-    }
 }

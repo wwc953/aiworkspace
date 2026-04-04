@@ -31,6 +31,12 @@ typedef struct {
   int post_field_count;
   char *headers_str;
   long timeout_ms;
+  // For multi-file uploads, we need to store multiple sets of field data
+  char **field_names;
+  char **filenames;
+  unsigned char **file_datas;
+  unsigned long *data_lengths;
+  int max_files;
 } http_multipart_data;
 
 // Function to parse comma-separated strings
